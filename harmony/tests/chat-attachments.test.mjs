@@ -497,6 +497,22 @@ test('base64 padding, the one MiB reserve and the photo count decide which origi
   await attachments.close();
 });
 
+test('an unsupported photo is rejected even when its original would overflow the request', async () => {
+  const { runtime, repo, attachments } = await pickedPictures([[1, 2, 3]], { requestBytes: 1024 * 1024 });
+  runtime.imageMime = 'image/heic';
+  await assert.rejects(attachments.prepareSend('Read'), /chat_attachment_image_unsupported/);
+  assert.equal(repo.uploads.length, 0);
+  await attachments.close();
+});
+
+test('a failed image pack does not fall through to a file upload', async () => {
+  const { runtime, repo, attachments } = await pickedPictures([[1, 2, 3]], { maxSide: 1280 });
+  runtime.packBytes = 0;
+  await assert.rejects(attachments.prepareSend('Read'), /chat_attachment_image_unsupported/);
+  assert.equal(repo.uploads.length, 0);
+  await attachments.close();
+});
+
 test('a photo upload with an uncertain result is never repeated as a file or inline after reopening', async () => {
   const repo = repository(async () => { throw Object.assign(Error('timed out'), { resultUnknown: true }); });
   const { attachments, client, session } = await pickedPictures([[1], [2]], { perMessage: 1 }, repo);
@@ -806,5 +822,8 @@ test('a photo whose overflow upload was refused goes inline once the edited draf
   assert.deepEqual(prepared.images.map(photo => photo.data), ['Ag==']);
   assert.equal(prepared.overflowNoticeKey, '');
   assert.equal(repo.uploads.length, 1);
+  await attachments.close();
+  await attachments.open(client, context(), session);
+  assert.equal(attachments.attachments[0].overflowReason, '');
   await attachments.close();
 });

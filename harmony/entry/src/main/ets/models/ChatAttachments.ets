@@ -634,19 +634,28 @@ export class ChatAttachments {
         if (admit && !admit()) throw new Error('chat_attachment_target_unavailable');
         if (!this.connected(operation, repository)) throw new Error('scope_changed');
         if (item.kind === 'image') {
-          // A confirmed upload keeps its path, and an uncertain result still blocks a retry.
-          // A refused upload can be reconsidered under the current selection and limits.
-          if (!item.overflowReason || item.status === 'failed') {
-            if (imagePayloads.length >= limits.perMessage) item.overflowReason = 'count';
-            else {
-              const encoded = base64Room >= 4 ? await this.encodeImage(item, limits) : undefined;
-              if (encoded && 4 * Math.ceil(encoded.data.byteLength / 3) <= base64Room) {
-                const base64 = new util.Base64Helper().encodeToStringSync(new Uint8Array(encoded.data));
-                imagePayloads.push(new ChatImagePayload(encoded.mime, base64));
-                base64Room -= base64.length;
-                continue;
-              }
-              item.overflowReason = 'bytes';
+          // Reevaluate unsent photos against this selection and the hub's current limits.
+          if (item.status === 'selected' || item.status === 'failed') {
+            const overCount = imagePayloads.length >= limits.perMessage;
+            let encoded: EncodedAttachmentImage | undefined;
+            if (!overCount && base64Room >= 4) {
+              encoded = await this.encodeImage(item, limits);
+            } else {
+              // Even if the budget skips encoding, only a verified photo can take the overflow path.
+              const original = await this.inspectImage(item.localPath);
+              if (original.mime !== item.mime) throw new Error('chat_attachment_image_unsupported');
+            }
+            const fits = encoded !== undefined && 4 * Math.ceil(encoded.data.byteLength / 3) <= base64Room;
+            const reason = overCount ? 'count' : fits ? '' : 'bytes';
+            if (item.overflowReason !== reason) {
+              item.overflowReason = reason;
+              await this.replaceItemAndSave(operation, item);
+            }
+            if (fits && encoded) {
+              const base64 = new util.Base64Helper().encodeToStringSync(new Uint8Array(encoded.data));
+              imagePayloads.push(new ChatImagePayload(encoded.mime, base64));
+              base64Room -= base64.length;
+              continue;
             }
           }
           if (item.overflowReason === 'count') countOverflow = true;
@@ -900,6 +909,7 @@ export class ChatAttachments {
       packer = image.createImagePacker();
       const edge = Math.min(limits.maxSide, maxDimension);
       const attempts = edge > 1280 ? 3 : 2;
+      let packed = false;
       for (let attempt = 0; attempt < attempts; attempt++) {
         const scale = (attempt === 2 ? 1280 : edge) / maxDimension;
         const desired: AttachmentImageSize = {
@@ -909,8 +919,12 @@ export class ChatAttachments {
         pixels = await source.createPixelMap({ desiredSize: desired });
         const data = await packer.packToData(pixels, { format: 'image/jpeg', quality: attempt === 0 ? 75 : 60 });
         await pixels.release(); pixels = undefined;
-        if (data.byteLength > 0 && data.byteLength <= limits.imageBytes) return { mime: 'image/jpeg', data: data };
+        if (data.byteLength > 0) {
+          packed = true;
+          if (data.byteLength <= limits.imageBytes) return { mime: 'image/jpeg', data: data };
+        }
       }
+      if (!packed) throw new Error('chat_attachment_image_unsupported');
       return undefined;
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('chat_attachment_')) throw error;
