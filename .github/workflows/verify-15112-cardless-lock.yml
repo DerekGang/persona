@@ -1,0 +1,75 @@
+name: Verify cardless recovery with a controlled write lock
+on:
+  push:
+    branches: ['verify/15112-cardless-lock']
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PERSONA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      GOMAXPROCS: "6"
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 4
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Compare the test when a digest reaches the old restart first
+        shell: bash
+        working-directory: server
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cardless-15112"
+          mkdir -p "$out"
+          python3 -B - "$out" <<'PY'
+          import json, subprocess, sys
+          from pathlib import Path
+          out = Path(sys.argv[1])
+          path = Path("internal/assistant/supervise_cardless_recovery_test.go").resolve()
+          original = subprocess.check_output(
+              ["git", "show", "HEAD~2:server/internal/assistant/supervise_cardless_recovery_test.go"], text=True)
+          for name, body in (("baseline", original), ("candidate", path.read_text())):
+              bounds = body.index("\n\ts.restoreSupervisePending(context.Background())", body.index("func restartCardlessClaim("))
+              end = body.index("\n\treturn s, f", bounds)
+              patched = out / f"{name}.go"
+              patched.write_text(body[:end] + "\n\tflushCardlessClaim(s)" + body[end:])
+              (out / f"{name}.json").write_text(json.dumps({"Replace": {str(path): str(patched)}}))
+          PY
+          if go test -overlay "$out/baseline.json" ./internal/assistant -run '^TestCardlessClaimRecoveryRechecksRoundUnderWriteLock$' -count=1 > "$out/baseline.log" 2>&1; then
+            printf '%s\n' 'The baseline control completed.'
+          else
+            cat "$out/baseline.log"
+            rg -q 'waiting for its test-held mutex' "$out/baseline.log"
+          fi
+          go test -overlay "$out/candidate.json" ./internal/assistant -run '^TestCardlessClaimRecoveryRechecksRoundUnderWriteLock$' -count=10 | tee "$out/candidate.log"
+      - name: Repeat the held-lock race and related durable recovery
+        shell: bash
+        working-directory: server
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cardless-15112"
+          go test -json -race ./internal/assistant -run '^TestCardlessClaimRecoveryRechecksRoundUnderWriteLock$' -count=36 > "$out/race.jsonl"
+          go test -json ./internal/assistant -run '^TestCardlessClaim' -count=1 > "$out/recovery.jsonl"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardless-15112
+          path: ${{ runner.temp }}/cardless-15112
+          retention-days: 3
