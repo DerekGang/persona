@@ -174,7 +174,7 @@ type queueCASPolicy int
 const (
 	queueCAS queueCASPolicy = iota
 	queueOwnerStart
-	queueQuotaStart
+	queueUnstartedTask
 )
 
 func (s *Service) replaceTaskQueue(ctx context.Context, task PlanTask, next *TaskQueue, policy queueCASPolicy) bool {
@@ -210,15 +210,26 @@ func (s *Service) replaceTaskQueue(ctx context.Context, task PlanTask, next *Tas
 	}
 	var changed bool
 	st := s.store()
-	if policy == queueQuotaStart && st != nil {
-		store, ok := st.(gatewayQueueStore)
-		if !ok || task.Queue.Gateway == nil {
+	var since time.Time
+	if policy == queueUnstartedTask {
+		switch {
+		case task.Queue != nil && task.Queue.Gateway != nil:
+			since = task.Queue.Gateway.Since
+		case task.Queue != nil && task.Queue.Offline != nil:
+			since = task.Queue.QueuedAt
+		default:
+			return false
+		}
+	}
+	if policy == queueUnstartedTask && st != nil {
+		store, ok := st.(unstartedTaskQueueStore)
+		if !ok {
 			return false
 		}
 		plan.UpdatedAt = time.Now().UTC()
 		replacement, _ := json.Marshal(next)
 		changed, err = store.ClaimUnstartedTaskQueue(ctx, plan.ID, index, task.TodoID,
-			task.Queue.Gateway.Since, expected, replacement, decision, plan.UpdatedAt)
+			since, expected, replacement, decision, plan.UpdatedAt)
 	} else if store, ok := st.(interface {
 		CompareTaskQueue(context.Context, string, int, string, json.RawMessage, json.RawMessage, json.RawMessage, time.Time) (bool, error)
 	}); ok {
@@ -226,8 +237,8 @@ func (s *Service) replaceTaskQueue(ctx context.Context, task PlanTask, next *Tas
 		replacement, _ := json.Marshal(next)
 		changed, err = store.CompareTaskQueue(ctx, plan.ID, index, task.TodoID, expected, replacement, decision, plan.UpdatedAt)
 	} else {
-		if policy == queueQuotaStart {
-			ready, err := s.gatewayTaskReadyAt(ctx, task, task.Queue.Gateway.Since)
+		if policy == queueUnstartedTask {
+			ready, err := s.queuedTaskReadyAt(ctx, task, since)
 			if err != nil || !ready {
 				return false
 			}
