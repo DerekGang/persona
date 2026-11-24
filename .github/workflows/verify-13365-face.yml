@@ -1,0 +1,37 @@
+name: Persona face renderer simulator probe
+on:
+  push:
+    branches: ['verify/13365-face-*']
+permissions:
+  contents: read
+jobs:
+  face:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PERSONA_FACE_PROBE_VERSION: ${{ endsWith(github.ref_name, '-current') && '26.2' || '18.6' }}
+      PERSONA_FACE_PROBE_MATCH_SCALE: ${{ contains(github.ref_name, '-traits') && 'yes' || 'no' }}
+      PERSONA_FACE_PROBE_TABLET: ${{ endsWith(github.ref_name, '-tablet') && 'yes' || 'no' }}
+      PERSONA_FACE_PROBE_SEARCH: ${{ endsWith(github.ref_name, '-search') && 'yes' || 'no' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare Xcode and project generator
+        run: |
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+          sudo env DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -runFirstLaunch
+          xcodebuild -version
+          brew install xcodegen
+      - name: Compare the hosted renderers on iOS
+        run: bash .github/face-probe/run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios18-face-probe
+          path: |
+            ${{ runner.temp }}/persona-face-probe/shots
+            ${{ runner.temp }}/persona-face-probe/face-test.log
+          if-no-files-found: warn
+          retention-days: 2
