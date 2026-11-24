@@ -73,7 +73,7 @@ import { COMPOSER_INPUT, lostWith } from "../../lib/dock-focus";
 import { FailureNote, showsFailureNote } from "./FailureNote";
 import { LazyCloseoutCard } from "./closeout-chunks";
 import { shownCloseout } from "../../lib/closeout";
-import { AWAIT_MS, awaitingTurn, DOCK_MAX, turnStart } from "./dock";
+import { AWAIT_MS, awaitingTurn, COMMAND_DOCK_MAX, DOCK_MAX, turnStart } from "./dock";
 import { HEADER_SLOT, HEADER_SLOT_END, HEADER_SLOT_START } from "./header";
 import { AgentModelPill, AssistantModelPill, useAssistantTurnFix } from "./ModelPill";
 import { switchRefused } from "../../lib/session-models";
@@ -2236,6 +2236,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const [cardField, setCardField] = useState(false);
   const onDockFocus = (e: React.FocusEvent) => {
     dockFocus.current = composerBox.current?.contains(e.target) ? null : e.target;
+    if (e.target.matches(COMPOSER_INPUT)) setCommandReveal(undefined);
     if (isCardField(e.target)) setCardField(true);
     else if (!inOwnCard(e.target)) setCardField(false);
   };
@@ -2713,11 +2714,11 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
 
       <div
         data-chat-dock
-        // at most DOCK_MAX on every width (#5375): what sits over the composer gives up its height first and scrolls in
+        // What sits over the composer gives up its height first (#5375) and scrolls in
         // its own box, the chat above shrinks by what the dock takes and is never drawn over. Should the composer alone
         // need more (a keyboard leaving little room), it grows up over the chat (justify-end) instead of down off the screen.
         className="mx-auto flex max-h-(--dock-max) w-full max-w-[880px] flex-col justify-end gap-2 px-4 pb-4 sm:px-7 [@media(max-height:500px)]:pb-2"
-        style={{ "--dock-max": DOCK_MAX } as React.CSSProperties}
+        style={{ "--dock-max": compactDock && commandInSlot ? COMMAND_DOCK_MAX : DOCK_MAX } as React.CSSProperties}
         onInput={pendingRecap ? dismissRecap : undefined}
         onFocus={onDockFocus}
         onBlur={onDockBlur}

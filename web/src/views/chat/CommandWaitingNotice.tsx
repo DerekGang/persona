@@ -17,7 +17,9 @@ export function focusPendingCommand(dock: HTMLElement, id: string): boolean {
   if (!card || card.closest("[hidden],[inert]")) return false;
   card.focus({ preventScroll: true });
   if (document.activeElement !== card) return false;
-  card.scrollIntoView({ block: "nearest" });
+  const field = card.querySelector("input");
+  if (field) field.scrollIntoView({ block: "center" });
+  else card.scrollIntoView({ block: "nearest" });
   return true;
 }
 
