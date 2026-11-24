@@ -1,0 +1,70 @@
+name: Verify Android Agents seen rows
+on:
+  push:
+    branches: ['verify/12584-android-*']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      JAVA_TOOL_OPTIONS: '-Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the repository's Android toolchain
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add --toolchain 1.98.0 aarch64-linux-android x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Prefetch the Robolectric API 35 runtime from the Central mirror
+        run: |
+          set -euo pipefail
+          version=15-robolectric-13954326-i7
+          artifact="org/robolectric/android-all-instrumented/$version"
+          remote="https://maven-central.storage-download.googleapis.com/maven2/$artifact"
+          local_maven="$HOME/.m2/repository/$artifact"
+          mkdir -p "$local_maven"
+          jar="android-all-instrumented-$version.jar"
+          curl --fail --silent --show-error --retry 4 --retry-all-errors "$remote/$jar" -o "$local_maven/$jar.tmp"
+          curl --fail --silent --show-error --retry 4 --retry-all-errors "$remote/$jar.sha512" -o "$RUNNER_TEMP/robolectric.sha512"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/robolectric.sha512")" "$local_maven/$jar.tmp" | sha512sum --check
+          mv "$local_maven/$jar.tmp" "$local_maven/$jar"
+      - name: Verify projection, visit state, settings and rendering
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --max-workers=4 :core:domain:test --tests '*AgentListFixtureTest'
+          ./gradlew --no-daemon --max-workers=4 :feature:agents:testDebugUnitTest \
+            --tests '*AgentsJustFinishedTest' --tests '*SeenRowsShotsTest' --tests '*AgentsVisibilityTest' --tests '*AgentsHeldInListTest'
+          ./gradlew --no-daemon --max-workers=4 :feature:settings:testDebugUnitTest --tests '*AgentsListLayoutShotsTest'
+          ./gradlew --no-daemon --max-workers=4 :app:compileDebugKotlin
+          for style in glass brief board; do
+            for appearance in light dark; do
+              test -s "feature/agents/build/seen-rows-shots/seen-rows-$style-$appearance.png"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-12584-android
+          path: |
+            android/core/domain/build/test-results/test
+            android/feature/agents/build/test-results/testDebugUnitTest
+            android/feature/agents/build/seen-rows-shots
+            android/feature/settings/build/test-results/testDebugUnitTest
+            android/feature/settings/build/agents-list-layout-shots
+          if-no-files-found: warn
+          retention-days: 2

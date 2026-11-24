@@ -864,6 +864,11 @@ The web Agent conversation header's **Session overview** list button toggles a p
 
 ### 3.4 Lists and rows
 
+- **Android Agents seen rows** (#12584): reading a visible Unread or Just finished row keeps it in place as Seen for the
+  current visit. Fresh work takes its usual position and only unread work contributes to the Unread count. By state offers
+  **Clear Seen (N)** for its retained rows. Pull to refresh or change the list scope to start a new visit. Appearance →
+  Agents list → Seen Agents switches between keeping rows in place and moving them when a chat closes.
+
 - Web History (#10240) is an Agents destination for non-running sessions, grouped by local activity day. It shares folded sidebar state and visibility before filtering; day counts equal the displayed filtered rows, including only loaded content-search matches. The primary switch stays Assistant / Agents. Agents + owns New Agent, New terminal and Open terminals; History never starts on a remembered terminal inventory (details in `docs/web/web.md`).
 
 - **Native workspace pins** (#9300): the Agents workspace tree shows a host-pinned workspace with the existing pin mark,
