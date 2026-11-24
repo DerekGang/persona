@@ -1,0 +1,35 @@
+name: Verify held-start reconnection
+on:
+  push:
+    branches: ['verify/14966-held-start-reconnect']
+permissions:
+  contents: read
+jobs:
+  devices:
+    name: Go devices (${{ matrix.coverage }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        coverage: [full, race]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            sdk/go/go.sum
+      - name: Verify the devices package
+        if: matrix.coverage == 'full'
+        env:
+          GOMAXPROCS: '4'
+        run: go -C server test -count=1 -v -timeout=8m ./internal/devices
+      - name: Repeat held-start cases under the race detector
+        if: matrix.coverage == 'race'
+        env:
+          GOMAXPROCS: '4'
+        run: go -C server test -race -count=30 -v -timeout=5m ./internal/devices -run '^TestHeldStart'
