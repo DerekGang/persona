@@ -2446,6 +2446,28 @@
         }
       }
     },
+    "Not now" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今はしない"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂不输入"
+          }
+        }
+      }
+    },
     "Not Now [Location Always]" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -52251,6 +52273,28 @@
         }
       }
     },
+    "Command input" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Command input"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンド入力"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令输入"
+          }
+        }
+      }
+    },
     "Command line" : {
       "localizations" : {
         "en" : {
@@ -92275,6 +92319,28 @@
         }
       },
       "extractionState" : "manual"
+    },
+    "Input" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "入力"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入"
+          }
+        }
+      }
     },
     "Input Field" : {
       "localizations" : {
@@ -193267,6 +193333,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个仓库没有 GitHub 远端"
+          }
+        }
+      }
+    },
+    "This request can no longer be answered." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This request can no longer be answered."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このリクエストは現在応答できません。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这条请求已无法回答。"
           }
         }
       }

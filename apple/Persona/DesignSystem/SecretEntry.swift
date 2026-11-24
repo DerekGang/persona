@@ -26,14 +26,17 @@ struct SecretField: View {
     var filled: String
     @Binding var text: String
     var identifier: String?
+    var startsHidden: Bool
     var onSubmitAction: (() -> Void)?
     var onFocusAction: ((Bool) -> Void)?
 
-    init(_ placeholder: String, filled: String = String(localized: "Filled in"), text: Binding<String>, identifier: String? = nil) {
+    init(_ placeholder: String, filled: String = String(localized: "Filled in"), text: Binding<String>, identifier: String? = nil,
+         startsHidden: Bool = true) {
         self.placeholder = placeholder
         self.filled = filled
         _text = text
         self.identifier = identifier
+        self.startsHidden = startsHidden
     }
 
     /// Runs `action` when Return is pressed in the field, passed through to the real input control on every platform.
@@ -52,7 +55,7 @@ struct SecretField: View {
 
     var body: some View {
         SecretTextField(placeholder: placeholder, filled: filled, identifier: identifier, text: $text,
-                        onSubmit: onSubmitAction, onFocus: onFocusAction)
+                        onSubmit: onSubmitAction, onFocus: onFocusAction, startsHidden: startsHidden)
     }
 }
 
@@ -63,10 +66,12 @@ private struct SecretTextField: UIViewRepresentable {
     @Binding var text: String
     var onSubmit: (() -> Void)?
     var onFocus: ((Bool) -> Void)?
+    var startsHidden: Bool
 
     func makeUIView(context: Context) -> EmptyingSecureTextField {
         let f = EmptyingSecureTextField()
-        f.isSecureTextEntry = true
+        f.startsHidden = startsHidden
+        f.isSecureTextEntry = startsHidden
         f.textContentType = .oneTimeCode
         f.autocapitalizationType = .none
         f.autocorrectionType = .no
@@ -99,6 +104,7 @@ private struct SecretTextField: UIViewRepresentable {
     func updateUIView(_ f: EmptyingSecureTextField, context: Context) {
         context.coordinator.field = self
         f.accessibilityIdentifier = identifier
+        f.isEnabled = context.environment.isEnabled
         f.tintColor = UIColor(Theme.accent)
         // `.multilineTextAlignment` as on a SwiftUI field: a form row's value sits on the trailing side.
         f.textAlignment = switch context.environment.multilineTextAlignment {
@@ -106,7 +112,7 @@ private struct SecretTextField: UIViewRepresentable {
         case .center: .center
         case .trailing: f.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .left : .right
         }
-        if !f.isFirstResponder && !(f.text ?? "").isEmpty { f.text = "" }
+        if (!f.isFirstResponder || text.isEmpty) && !(f.text ?? "").isEmpty { f.text = "" }
         context.coordinator.refresh(f)
     }
 
@@ -151,6 +157,7 @@ private struct SecretTextField: UIViewRepresentable {
 /// The text is set, not typed, so the binding keeps the value (`editingChanged` is only sent for typing).
 private final class EmptyingSecureTextField: UITextField {
     weak var revealButton: UIButton?
+    var startsHidden = true
 
     override func resignFirstResponder() -> Bool {
         hideAndEmpty()
@@ -164,8 +171,8 @@ private final class EmptyingSecureTextField: UITextField {
 
     /// Hidden again and empty: a shown value never stays in the field once it is not being typed in.
     private func hideAndEmpty() {
-        if !isSecureTextEntry {
-            isSecureTextEntry = true
+        if isSecureTextEntry != startsHidden {
+            isSecureTextEntry = startsHidden
             showRevealState()
         }
         text = ""

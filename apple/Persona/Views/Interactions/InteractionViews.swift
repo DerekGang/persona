@@ -1292,6 +1292,7 @@ struct PermissionForm: View {
         // typed in keeps its UIKit text when only the binding is cleared).
         if interaction.isSecretRun { SecretRunForm(interaction: interaction).id(interaction.id) }
         else if interaction.isSecretHandoff { SecretHandoffForm(interaction: interaction).id(interaction.id) }
+        else if let details = interaction.commandInput { CommandInputForm(interaction: interaction, details: details).id(interaction.id) }
         else if interaction.requiresInput { PermissionInputForm(interaction: interaction) }
         else if AppStyle.current.usesBeautifulUI { BUIPermissionForm(interaction: interaction) } else { plain }
     }

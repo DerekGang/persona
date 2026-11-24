@@ -169,18 +169,22 @@ struct ExchangeText: View {
         memo(text) { raw in
             let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace,
                                                                   failurePolicy: .returnPartiallyParsedIfPossible)
-            var out = (try? AttributedString(markdown: withoutHeadingMarks(raw), options: options)) ?? AttributedString(raw)
-            let plain = String(out.characters)
-            guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
-            let ns = plain as NSString
-            for m in detector.matches(in: plain, range: NSRange(location: 0, length: ns.length)) {
-                guard let url = m.url, url.scheme == "http" || url.scheme == "https", let r = Range(m.range, in: plain) else { continue }
-                let lo = out.characters.index(out.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: r.lowerBound))
-                let hi = out.characters.index(out.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: r.upperBound))
-                if out[lo..<hi].runs.allSatisfy({ $0.link == nil }) { out[lo..<hi].link = url }
-            }
-            return out
+            return linkWebAddresses((try? AttributedString(markdown: withoutHeadingMarks(raw), options: options)) ?? AttributedString(raw))
         }
+    }
+
+    nonisolated static func linkWebAddresses(_ text: AttributedString) -> AttributedString {
+        var out = text
+        let plain = String(out.characters)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
+        let ns = plain as NSString
+        for m in detector.matches(in: plain, range: NSRange(location: 0, length: ns.length)) {
+            guard let url = m.url, url.scheme == "http" || url.scheme == "https", let r = Range(m.range, in: plain) else { continue }
+            let lo = out.characters.index(out.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: r.lowerBound))
+            let hi = out.characters.index(out.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: r.upperBound))
+            if out[lo..<hi].runs.allSatisfy({ $0.link == nil }) { out[lo..<hi].link = url }
+        }
+        return out
     }
 
     /// The same text with the Markdown marks dropped, for a one-line header that can't hold styling or links.
