@@ -126,7 +126,8 @@ class App:
     def settle(self):
         try:
             self.c.call("settle", timeout=3, stable=2, pixels=600)
-        except CtlError:
+        except (CtlError, TimeoutError):
+            # The following tree read still has to succeed and match the case.
             pass
 
     def marked(self, prefix="chat."):
