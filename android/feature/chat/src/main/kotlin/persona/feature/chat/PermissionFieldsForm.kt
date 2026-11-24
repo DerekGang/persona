@@ -60,36 +60,27 @@ internal fun CommandInputSummary(input: CommandInput) {
 }
 
 @Composable
-internal fun CommandInputActions(
-    input: CommandInput, value: String, update: (String) -> Unit, editable: Boolean, canDecline: Boolean,
-    canSend: Boolean, onDecline: () -> Unit, onSend: () -> Unit, modifier: Modifier = Modifier,
-) {
+internal fun CommandInputField(input: CommandInput, value: String, update: (String) -> Unit, editable: Boolean) {
     var masked by remember(input.masked) { mutableStateOf(input.masked) }
     var focused by remember { mutableStateOf(false) }
     val restoreFocus = remember(masked) { focused }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
-        // The legacy Compose editor keeps its first password semantics after a visual transformation changes.
-        // Replace the editor at that boundary. Its line lives in the card and stays available to the new editor.
-        key(masked) {
-            val focus = remember { FocusRequester() }
-            JSecretField(value, update,
-                label = input.prompt.ifBlank { stringResource(R.string.chat_command_input_line) },
-                modifier = Modifier.fillMaxWidth().testTag("interaction.field.input").focusRequester(focus)
-                    .onFocusChanged { focused = it.hasFocus },
-                enabled = editable, masked = masked,
-                trailing = {
-                    JTextButton(
-                        stringResource(if (masked) R.string.chat_command_input_show else R.string.chat_command_input_hide),
-                        onClick = { masked = !masked }, enabled = editable,
-                        modifier = Modifier.testTag("interaction.commandInput.visibility"),
-                    )
-                })
-            if (restoreFocus) LaunchedEffect(Unit) { focus.requestFocus() }
-        }
-        DecisionButtons(
-            primary = JAction(stringResource(R.string.chat_tray_send), enabled = canSend, onClick = onSend),
-            secondary = JAction(stringResource(R.string.chat_command_input_not_now), enabled = canDecline, onClick = onDecline),
-        )
+    // The legacy Compose editor keeps its first password semantics after a visual transformation changes.
+    // Replace the editor at that boundary. Its line lives in the card and stays available to the new editor.
+    key(masked) {
+        val focus = remember { FocusRequester() }
+        JSecretField(value, update,
+            label = input.prompt.ifBlank { stringResource(R.string.chat_command_input_line) },
+            modifier = Modifier.fillMaxWidth().testTag("interaction.field.input").focusRequester(focus)
+                .onFocusChanged { focused = it.hasFocus },
+            enabled = editable, masked = masked,
+            trailing = {
+                JTextButton(
+                    stringResource(if (masked) R.string.chat_command_input_show else R.string.chat_command_input_hide),
+                    onClick = { masked = !masked }, enabled = editable,
+                    modifier = Modifier.testTag("interaction.commandInput.visibility"),
+                )
+            })
+        if (restoreFocus) LaunchedEffect(Unit) { focus.requestFocus() }
     }
 }
 

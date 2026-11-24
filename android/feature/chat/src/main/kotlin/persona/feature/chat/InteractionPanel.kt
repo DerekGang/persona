@@ -283,13 +283,15 @@ internal fun InteractionForm(
                 canDeny = enabled(AnswerAction.Deny), canAllow = enabled(AnswerAction.Allow), canAlways = enabled(AnswerAction.Always),
                 onDeny = { act(AnswerAction.Deny) }, onAllow = { act(AnswerAction.Allow) }, onAlways = { act(AnswerAction.Always) },
                 modifier = Modifier.padding(top = Tokens.Space.s))
-            else if (command != null) CommandInputActions(command, fieldValues["input"].orEmpty(), { fieldValues = mapOf("input" to it) },
-                editable, canDecline = enabled(AnswerAction.Deny),
-                canSend = fieldValues["input"].orEmpty().isNotBlank() &&
-                    AnswerBuilder.build(interaction, AnswerAction.Allow, draft.copy(values = fieldValues), context).allowed,
-                onDecline = { act(AnswerAction.Deny) },
-                onSend = { act(AnswerAction.Allow, draft.copy(values = fieldValues)) },
-                modifier = Modifier.padding(top = Tokens.Space.s))
+            else if (command != null) DecisionButtons(
+                primary = JAction(stringResource(R.string.chat_tray_send),
+                    enabled = fieldValues["input"].orEmpty().isNotBlank() &&
+                        AnswerBuilder.build(interaction, AnswerAction.Allow, draft.copy(values = fieldValues), context).allowed,
+                ) { act(AnswerAction.Allow, draft.copy(values = fieldValues)) },
+                secondary = JAction(stringResource(R.string.chat_command_input_not_now), enabled = enabled(AnswerAction.Deny)) {
+                    act(AnswerAction.Deny)
+                },
+            )
             // A card with fields (#4641): its form, Deny and Fill In & Allow, no Always.
             else if (interaction.hasFieldsForm) PermissionFieldsActions(interaction.fields.orEmpty(), fieldValues, { fieldValues = it }, editable,
                 canDeny = enabled(AnswerAction.Deny),
@@ -421,7 +423,13 @@ internal fun InteractionForm(
         Spacer(Modifier.height(Tokens.Space.s))
         when (interaction.kind) {
             "permission" -> if (interaction.isSecretRun) SecretRunSummary(interaction)
-            else if (command != null) CommandInputSummary(command)
+            else if (command != null) {
+                CommandInputSummary(command)
+                if (!readOnly) {
+                    Spacer(Modifier.height(Tokens.Space.s))
+                    CommandInputField(command, fieldValues["input"].orEmpty(), { fieldValues = mapOf("input" to it) }, editable)
+                }
+            }
             else if (interaction.isSecretHandoff) SecretHandoffSummary(interaction) else {
                 // Another agent's card says why it asks, in its own words.
                 interaction.reason?.takeIf { interaction.fromOtherAgent && it.isNotBlank() }?.let {

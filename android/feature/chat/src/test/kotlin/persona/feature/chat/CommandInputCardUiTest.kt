@@ -27,6 +27,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -57,7 +58,7 @@ class CommandInputCardUiTest {
         useUnmergedTree = true,
     )
 
-    private fun show(masked: Boolean = true) {
+    private fun show(masked: Boolean = true, dockHeight: Dp = 820.dp) {
         val maskField = if (masked) ""","masked":true""" else ""
         val card = JsonCodec.decodeFromString<Interaction>(
             """{"id":"fixture-command-input","machine_id":"example","session_id":"sample","kind":"permission",
@@ -68,7 +69,7 @@ class CommandInputCardUiTest {
         rule.setContent {
             PersonaTheme(style = style, darkTheme = dark, reduceMotion = true) {
                 Column(Modifier.fillMaxWidth().background(PersonaTheme.palette.background)) {
-                    InteractionPanel(listOf(card), null, 820.dp, null, emptySet(),
+                    InteractionPanel(listOf(card), null, dockHeight, null, emptySet(),
                         { _, resolution -> replies += resolution }, null, {}, terminalHelp = false,
                         commandInputErrors = refusal?.let { mapOf(card.id to it) }.orEmpty())
                 }
@@ -109,6 +110,14 @@ class CommandInputCardUiTest {
         rule.onNodeWithText("Not now").performClick()
         assertEquals(listOf(Resolution(allow = false)), replies)
         rule.onNodeWithText("Send").assertIsNotEnabled()
+    }
+
+    @Test fun compactDockKeepsTheDecisionButtonsVisible() {
+        show(dockHeight = 260.dp)
+        rule.onNodeWithText("Not now").assertIsDisplayed()
+        rule.onNodeWithText("Send").assertIsDisplayed().assertIsNotEnabled()
+        rule.onNodeWithText("Not now").performClick()
+        assertEquals(listOf(Resolution(allow = false)), replies)
     }
 
     @Test fun capturesAllThreeStylesInBothAppearances() {
