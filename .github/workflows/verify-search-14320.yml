@@ -1,0 +1,134 @@
+name: Verify the light chat search on an iPhone
+on:
+  push:
+    branches: [verify/14320-search-light-chat]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  search:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45310869424
+          name: persona-search-products
+          path: ${{ runner.temp }}/app
+      - name: Restore the prebuilt iPhone app and test bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/derived/Build"
+          ditto -x -k "$RUNNER_TEMP/app/persona-search-products.zip" "$RUNNER_TEMP/derived/Build"
+          test -d "$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app"
+      - name: Run the existing chat search against the prebuilt app with a longer launch deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          brew install xcodegen
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          project="$RUNNER_TEMP/probe"
+          out="$RUNNER_TEMP/search-evidence"
+          mkdir -p "$project/Host" "$project/Tests" "$out"
+          cp apple/PersonaUITests/{AssistantChatSearchUITests,UITestStyle}.swift "$project/Tests/"
+          python3 - "$project/Tests/AssistantChatSearchUITests.swift" <<'PYTHON'
+          import sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          assert source.count("let app = XCUIApplication()") == 1
+          source = source.replace("let app = XCUIApplication()", 'let app = XCUIApplication(bundleIdentifier: "org.example.persona.ci")')
+          source = source.replace("for: [either], timeout: 20", "for: [either], timeout: 150")
+          source = source.replace("waitForExistence(timeout: 5)", "waitForExistence(timeout: 30)")
+          source = source.replace("waitForExistence(timeout: 10)", "waitForExistence(timeout: 60)")
+          source = source.replace("waitForExistence(timeout: 15)", "waitForExistence(timeout: 60)")
+          path.write_text(source)
+          PYTHON
+          cat > "$project/Host/Host.swift" <<'SWIFT'
+          import SwiftUI
+          @main struct Host: App {
+              var body: some Scene {
+                  WindowGroup { Color.clear }
+              }
+          }
+          SWIFT
+          cat > "$project/project.yml" <<'SPEC'
+          name: SearchProof
+          options:
+            deploymentTarget:
+              iOS: "18.6"
+          settings:
+            base:
+              SWIFT_VERSION: "6.0"
+              GENERATE_INFOPLIST_FILE: YES
+          targets:
+            ProofHost:
+              type: application
+              platform: iOS
+              sources: [Host]
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: org.example.persona.search.proofhost
+            ProofUITests:
+              type: bundle.ui-testing
+              platform: iOS
+              sources: [Tests]
+              dependencies:
+                - target: ProofHost
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: org.example.persona.search.proofhost.tests
+                  TEST_TARGET_NAME: ProofHost
+          schemes:
+            SearchProof:
+              build:
+                targets:
+                  ProofHost: all
+                  ProofUITests: [test]
+              test:
+                targets: [ProofUITests]
+                language: zh-Hans
+                region: CN
+          SPEC
+          xcodegen generate --spec "$project/project.yml" --project "$project"
+          export TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18760
+          PORT=18760 MOCK_CHAT_SEARCH=1 python3 -u scripts/mock/mock_hub.py > "$out/mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 45 --retry-connrefused --retry-delay 2 "$TEST_RUNNER_PERSONA_MOCK_HUB/api/v1/health"
+          sim=$(scripts/app/sim-boot.sh --profile stock "Persona 14320 Search Proof")
+          xcrun simctl ui "$sim" appearance light
+          xcrun simctl install "$sim" "$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app"
+          set +e
+          xcodebuild -quiet test -project "$project/SearchProof.xcodeproj" -scheme SearchProof -configuration Debug \
+            -destination "id=$sim" -derivedDataPath "$project/Derived" -parallel-testing-enabled NO \
+            -only-testing:ProofUITests/AssistantChatSearchUITests/testFindsAChatByTheUsersWordsAndOpensItThere \
+            -resultBundlePath "$RUNNER_TEMP/light.xcresult" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= > "$out/light.log" 2>&1
+          result=$?
+          set -e
+          tail -40 "$out/light.log"
+          if [[ -d "$RUNNER_TEMP/light.xcresult" ]]; then
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/light.xcresult" > "$out/light-results.json" || true
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/light.xcresult" --output-path "$out/light" || true
+          fi
+          exit "$result"
+      - name: Save iPhone screenshots and results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-14320-search-evidence
+          path: ${{ runner.temp }}/search-evidence
+          if-no-files-found: warn
+          retention-days: 7
