@@ -248,6 +248,8 @@ class HttpExtensionManagement internal constructor(
             (context?.locale ?: app.locale)?.takeIf { it.isNotEmpty() }?.let { put("locale", it) }
             (context?.platform ?: app.platform)?.takeIf { it.isNotEmpty() }?.let { put("platform", it) }
             (context?.uiVersion ?: app.uiVersion)?.let { put("ui_version", it) }
+            val unsupported = (app.unsupported.orEmpty() + context?.unsupported.orEmpty()).distinct()
+            if (unsupported.isNotEmpty()) put("unsupported", JsonArray(unsupported.map { JsonPrimitive(it) }))
             // Inbox Sources (#5278, #5661): the key itself, even "", says this app opens Set Up with ….
             // Only those pages set it. Empty is not dropped: without the key the pages leave the row out.
             context?.assistant?.let { put("assistant", it) }

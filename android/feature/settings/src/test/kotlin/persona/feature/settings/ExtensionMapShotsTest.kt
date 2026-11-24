@@ -66,12 +66,13 @@ class ExtensionMapShotsTest {
             links = listOf(ExtensionMapLink("Open route", "https://example.com/route")))
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
+        var shown by mutableStateOf(item)
         val opened = mutableListOf<String>()
         val handle = ExtensionViewHandle({ _, _ -> }, { _, _ -> }, {}, { opened += it })
         rule.setContent {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
                 Box(Modifier.width(360.dp).background(PersonaTheme.palette.background)) {
-                    ExtensionMap(item, ExtensionViewState(), handle)
+                    ExtensionMap(shown, ExtensionViewState(), handle)
                 }
             }
         }
@@ -87,8 +88,13 @@ class ExtensionMapShotsTest {
         rule.onNodeWithTag("extension-map-full-screen").assertExists()
         rule.onNodeWithText("Zoom in").performClick()
         rule.onNodeWithText("Reset map").performClick()
-        rule.onNode(hasTestTag("extension-map-route-b") and hasAnyAncestor(hasTestTag("extension-map-full-screen")))
-            .performScrollTo().performClick().assertIsSelected()
+        val scenic = rule.onNode(hasTestTag("extension-map-route-b") and hasAnyAncestor(hasTestTag("extension-map-full-screen")))
+        scenic.performScrollTo().performClick().assertIsSelected()
+        rule.runOnIdle {
+            shown = item.copy(showList = false, routes = item.routes.orEmpty() +
+                ExtensionMapRoute("c", "Along the bank", points = listOf(first, second)))
+        }
+        scenic.assertIsSelected()
         assertTrue(opened.isEmpty())
     }
 }

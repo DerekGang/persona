@@ -197,8 +197,9 @@ class HttpExtensionManagementTest {
     }
 
     // What the phone says of itself in every view's context; a fixed one so the bodies are exact.
-    private val device = ExtensionUiContext(tz = "Asia/Shanghai", locale = "zh-Hans-CN", platform = "android", uiVersion = 2)
-    private val deviceJson = """"tz":"Asia/Shanghai","locale":"zh-Hans-CN","platform":"android","ui_version":2"""
+    private val device = ExtensionUiContext(tz = "Asia/Shanghai", locale = "zh-Hans-CN", platform = "android",
+        uiVersion = 12, unsupported = listOf("scene"))
+    private val deviceJson = """"tz":"Asia/Shanghai","locale":"zh-Hans-CN","platform":"android","ui_version":12,"unsupported":["scene"]"""
 
     private val detail = """{"id":"example-notes","name":"Example Notes","kind":"connectors","status":"needs_setup","version":"1.2.0",
         "source":"installed","enabled":true,"description":"同步笔记","contributes":{"connectors":["examplenotes"]},
