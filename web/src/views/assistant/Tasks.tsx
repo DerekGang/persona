@@ -49,7 +49,7 @@ import { LiveCard } from "../../ui/AssistantCard";
 import type { AssistantView } from "../../lib/extension-wire";
 import { getState, hubHas, taskSessionLookup, useStore, type State } from "../../lib/store";
 import type { AgentState, Interaction, Item, Machine, Session } from "../../lib/types";
-import { Button, Collapse, cx, IconButton, Loading, Menu, toast, useNow } from "../../ui/atoms";
+import { Button, Collapse, cx, Loading, Menu, toast, useNow } from "../../ui/atoms";
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon, type IconName } from "../../ui/icons";
 import { AcceptRow, BriefCard } from "./Brief";
@@ -1175,16 +1175,13 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
     <div ref={bar} className={cx("flex min-h-0 flex-col gap-2", !tray && !showPager ? "shrink-0" : "shrink")} data-assistant-actionbar onKeyDownCapture={onTrayKey}>
       {decisionPanel}
       {tray && (
-        // its height follows what is visible (styles.css: an open tray lets the dock take most of it); the header stays
-        // and the list scrolls under it, so a plan card's Start (sticky to the list's bottom) is never under the header
-        <section id={trayId} aria-label={labels[tray]} data-expanded={expanded || undefined} className="assistant-action-tray flex min-h-0 flex-col overflow-hidden rounded-card bg-surface shadow-card">
-          <div className="flex shrink-0 items-center gap-2 bg-surface px-3 py-2 text-sm"><h2 className="min-w-0 flex-1 truncate font-semibold">{labels[tray]}</h2><Button onClick={() => setBoard(true)}>{t("assistant-tasks.all")}</Button><IconButton icon={expanded ? "collapse" : "expand"} label={t(expanded ? "assistant-tasks.tray_restore" : "assistant-tasks.tray_expand")} onClick={() => setExpanded((v) => !v)} /><IconButton icon="x" label={t("ui-atoms.close")} onClick={() => setTray(null)} /></div>
-          <Suspense fallback={<Loading />}>
-            <LazyAssistantTray tray={tray} conversation={conversation} entries={entries} waiting={waiting}
-              needsCount={counts.needs} ownAsks={countedOwnAsks} openRows={openRows} toggleRow={toggleRow}
-              openOwn={openOwn} showShelved={showShelved} toggleShelved={() => setShowShelved((value) => !value)} />
-          </Suspense>
-        </section>
+        <Suspense fallback={<Loading />}>
+          <LazyAssistantTray tray={tray} id={trayId} label={labels[tray]} expanded={expanded}
+            toggleExpanded={() => setExpanded((value) => !value)} openBoard={() => setBoard(true)} close={() => setTray(null)}
+            conversation={conversation} entries={entries} waiting={waiting}
+            needsCount={counts.needs} ownAsks={countedOwnAsks} openRows={openRows} toggleRow={toggleRow}
+            openOwn={openOwn} showShelved={showShelved} toggleShelved={() => setShowShelved((value) => !value)} />
+        </Suspense>
       )}
       {/* The entries are the dock's old "All" / task capsules (DOCK_CAPSULE), content-wide at the leading edge; the
           open tray is the selected capsule. The scroller pads by the focus ring's width and takes it back, as the

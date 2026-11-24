@@ -10,7 +10,7 @@ import { stateName } from "../../lib/state-labels";
 import { useStore } from "../../lib/store";
 import { openAsk } from "../../lib/todos";
 import type { Interaction, Session } from "../../lib/types";
-import { cx, Loading } from "../../ui/atoms";
+import { Button, cx, IconButton, Loading } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { StatusMark } from "../../ui/StatusMark";
 import { cardLine } from "../chat/dock";
@@ -144,10 +144,17 @@ function OwnAskRow({ ix, onOpen }: { ix: Interaction; onOpen: () => void }) {
   );
 }
 
-/** The open tray's list loads when one of the assistant's capsules is opened. */
-export function AssistantTrayContents({ tray, conversation, entries, waiting, needsCount, ownAsks, openRows,
+/** The tray loads when one of the assistant's capsules is opened. */
+export function AssistantTrayContents({ tray, id, label, expanded, toggleExpanded, openBoard, close,
+                                       conversation, entries, waiting, needsCount, ownAsks, openRows,
                                        toggleRow, openOwn, showShelved, toggleShelved }: {
   tray: AssistantTray;
+  id: string;
+  label: string;
+  expanded: boolean;
+  toggleExpanded: () => void;
+  openBoard: () => void;
+  close: () => void;
   conversation: string;
   entries: AssistantEntries;
   waiting: readonly NeedsYouItem[];
@@ -177,43 +184,52 @@ export function AssistantTrayContents({ tray, conversation, entries, waiting, ne
     return <NeedsYouRow key={item.key} item={item} open={openRows.has(key)} onToggle={() => toggleRow(key)} />;
   };
   return (
-    <div data-tray-list className="min-h-0 grow overflow-y-auto overscroll-contain">
-      {tray === "running" && <div className="divide-y divide-line">
-        {entries.running.map((item) => item.kind === "task" ? <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} activity={item.activity} countsOpen={item.countsOpen} /> : <RunningAgentRow key={item.key} session={item.session} activity={item.activity} />)}
-        {!entries.running.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_progress")}</p>}
-        {entries.shelved.length > 0 && (
-          <button type="button" data-progress-shelved aria-expanded={showShelved} onClick={toggleShelved} title={t("assistant-tasks.tray_shelved_hint")} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink-2 hover:bg-hover">
-            <Icon name={showShelved ? "chevron" : "chevronRight"} size={12} className="shrink-0" />
-            <span className="whitespace-nowrap">{t("assistant-tasks.tray_shelved", { count: entries.shelved.length })}</span>
-          </button>
-        )}
-        {showShelved && entries.shelved.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} activity={item.activity} countsOpen={item.countsOpen} />)}
-      </div>}
-      {/* how a task ended, instead of a card in the chat (#8237): what finished in the last 24 hours, newest first, seen
-          or not; one nobody opened yet says Just finished (#10922) */}
-      {tray === "finished" && <div data-tray-finished className="divide-y divide-line">
-        <Suspense fallback={<Loading />}><FinishedTasks items={entries.finished} conversation={conversation} /></Suspense>
-      </div>}
-      {tray === "review" && <div className="divide-y divide-line">
-        {entries.review.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} supervisorReview />)}
-        {!entries.review.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_review")}</p>}
-      </div>}
-      {tray === "parked" && <div className="divide-y divide-line">
-        <Suspense fallback={<Loading />}><ParkedTasks items={entries.parked} /></Suspense>
-        {!entries.parked.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_parked")}</p>}
-      </div>}
-      {tray === "needs" && <div className="flex flex-col gap-2 p-2">
-        {asking.map(needsRow)}
-        {ownAsks.map((ix) => <OwnAskRow key={ix.id} ix={ix} onOpen={() => openOwn(ix.id)} />)}
-        {rest.map(needsRow)}
-        {groups.slice(1).map((group) => (
-          <section key={group.supervisor} data-needs-supervisor={group.supervisor} aria-label={supervisorTitle(group.supervisor)} className="flex flex-col gap-2">
-            <h3 className="truncate px-1 pt-1 text-xs text-ink-2">{supervisorTitle(group.supervisor)}</h3>
-            {[...group.items.filter(isAsking), ...group.items.filter((item) => !isAsking(item))].map(needsRow)}
-          </section>
-        ))}
-        {!needsCount && <p className="px-1 py-2 text-sm text-ink-2">{t("assistant-tasks.tray_empty_pending")}</p>}
-      </div>}
-    </div>
+    // The header stays visible while the list and its sticky actions scroll below it.
+    <section id={id} aria-label={label} data-expanded={expanded || undefined} className="assistant-action-tray flex min-h-0 flex-col overflow-hidden rounded-card bg-surface shadow-card">
+      <div className="flex shrink-0 items-center gap-2 bg-surface px-3 py-2 text-sm">
+        <h2 className="min-w-0 flex-1 truncate font-semibold">{label}</h2>
+        <Button onClick={openBoard}>{t("assistant-tasks.all")}</Button>
+        <IconButton icon={expanded ? "collapse" : "expand"} label={t(expanded ? "assistant-tasks.tray_restore" : "assistant-tasks.tray_expand")} onClick={toggleExpanded} />
+        <IconButton icon="x" label={t("ui-atoms.close")} onClick={close} />
+      </div>
+      <div data-tray-list className="min-h-0 grow overflow-y-auto overscroll-contain">
+        {tray === "running" && <div className="divide-y divide-line">
+          {entries.running.map((item) => item.kind === "task" ? <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} activity={item.activity} countsOpen={item.countsOpen} /> : <RunningAgentRow key={item.key} session={item.session} activity={item.activity} />)}
+          {!entries.running.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_progress")}</p>}
+          {entries.shelved.length > 0 && (
+            <button type="button" data-progress-shelved aria-expanded={showShelved} onClick={toggleShelved} title={t("assistant-tasks.tray_shelved_hint")} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink-2 hover:bg-hover">
+              <Icon name={showShelved ? "chevron" : "chevronRight"} size={12} className="shrink-0" />
+              <span className="whitespace-nowrap">{t("assistant-tasks.tray_shelved", { count: entries.shelved.length })}</span>
+            </button>
+          )}
+          {showShelved && entries.shelved.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} activity={item.activity} countsOpen={item.countsOpen} />)}
+        </div>}
+        {/* how a task ended, instead of a card in the chat (#8237): what finished in the last 24 hours, newest first, seen
+            or not; one nobody opened yet says Just finished (#10922) */}
+        {tray === "finished" && <div data-tray-finished className="divide-y divide-line">
+          <Suspense fallback={<Loading />}><FinishedTasks items={entries.finished} conversation={conversation} /></Suspense>
+        </div>}
+        {tray === "review" && <div className="divide-y divide-line">
+          {entries.review.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} supervisorReview />)}
+          {!entries.review.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_review")}</p>}
+        </div>}
+        {tray === "parked" && <div className="divide-y divide-line">
+          <Suspense fallback={<Loading />}><ParkedTasks items={entries.parked} /></Suspense>
+          {!entries.parked.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_parked")}</p>}
+        </div>}
+        {tray === "needs" && <div className="flex flex-col gap-2 p-2">
+          {asking.map(needsRow)}
+          {ownAsks.map((ix) => <OwnAskRow key={ix.id} ix={ix} onOpen={() => openOwn(ix.id)} />)}
+          {rest.map(needsRow)}
+          {groups.slice(1).map((group) => (
+            <section key={group.supervisor} data-needs-supervisor={group.supervisor} aria-label={supervisorTitle(group.supervisor)} className="flex flex-col gap-2">
+              <h3 className="truncate px-1 pt-1 text-xs text-ink-2">{supervisorTitle(group.supervisor)}</h3>
+              {[...group.items.filter(isAsking), ...group.items.filter((item) => !isAsking(item))].map(needsRow)}
+            </section>
+          ))}
+          {!needsCount && <p className="px-1 py-2 text-sm text-ink-2">{t("assistant-tasks.tray_empty_pending")}</p>}
+        </div>}
+      </div>
+    </section>
   );
 }
