@@ -140,7 +140,6 @@
   --ai-tint: #efedfb;
   /* where an agent was opened (#2526), the color of its mark at the row's end: a terminal pane or a desktop app's own chat
      (a Lark group's mark is Lark's own) */
-  --source-terminal: #6a46c2;
   --source-desktop: #0b7285;
   --tooltip-bg: #25272b;
   --tooltip-fg: #f6f7f8;
@@ -199,7 +198,6 @@
   --danger-fill: #bd3038;
   --ai: #9c94ff;
   --ai-tint: #9c94ff24;
-  --source-terminal: #bea3ff;
   --source-desktop: #6fd3e3;
   --tooltip-bg: #111214;
   --tooltip-fg: #f2f3f4;
@@ -282,7 +280,6 @@
   --color-danger-fill: var(--danger-fill);
   --color-ai: var(--ai);
   --color-ai-tint: var(--ai-tint);
-  --color-source-terminal: var(--source-terminal);
   --color-source-desktop: var(--source-desktop);
   --color-tooltip-bg: var(--tooltip-bg);
   --color-tooltip-fg: var(--tooltip-fg);
@@ -344,9 +341,9 @@ body {
 [data-terminal-scheme="dark"], .dark { --user-bubble: #1d3557; --neutral-bubble: #2c2d31; --term-magenta: #c678dd; --term-cyan: #4fb6c4; }
 /* The chat's trace (aligned with cindy's defaults, #1963): tool rows and their chevrons, the work group's rail, thought
    text, diff counts and the running status bar's accent. */
-:root { --tool-ink: #525252; --tool-rail: #ddd6cb; --thinking-ink: #a3a3a3; --diff-add-fg: #22863a; --diff-del-fg: #b31d28; --diff-add-bg: #e6ffec; --diff-del-bg: #ffebe9; --diff-add-word: #abf2bc; --diff-del-word: #ffcecb; --status-accent: #ea6b17; --tool-hover: #ececec; }
-.dark { --tool-ink: #a3a3a3; --tool-rail: #404040; --thinking-ink: #737373; --diff-add-fg: #7ee787; --diff-del-fg: #ff7b72; --diff-add-bg: #2ea04326; --diff-del-bg: #f8514926; --diff-add-word: #2ea04366; --diff-del-word: #f8514966; --status-accent: #ea6b17; --tool-hover: #333436; }
-@theme inline { --color-tool-ink: var(--tool-ink); --color-tool-rail: var(--tool-rail); --color-thinking-ink: var(--thinking-ink); --color-diff-add-fg: var(--diff-add-fg); --color-diff-del-fg: var(--diff-del-fg); --color-diff-add-bg: var(--diff-add-bg); --color-diff-del-bg: var(--diff-del-bg); --color-diff-add-word: var(--diff-add-word); --color-diff-del-word: var(--diff-del-word); --color-status-accent: var(--status-accent); --color-tool-hover: var(--tool-hover); }
+:root { --tool-ink: #525252; --tool-rail: #ddd6cb; --thinking-ink: #a3a3a3; --diff-add-fg: #22863a; --diff-del-fg: #b31d28; --diff-add-bg: #e6ffec; --diff-del-bg: #ffebe9; --diff-add-word: #abf2bc; --diff-del-word: #ffcecb; --tool-hover: #ececec; }
+.dark { --tool-ink: #a3a3a3; --tool-rail: #404040; --thinking-ink: #737373; --diff-add-fg: #7ee787; --diff-del-fg: #ff7b72; --diff-add-bg: #2ea04326; --diff-del-bg: #f8514926; --diff-add-word: #2ea04366; --diff-del-word: #f8514966; --tool-hover: #333436; }
+@theme inline { --color-tool-ink: var(--tool-ink); --color-tool-rail: var(--tool-rail); --color-thinking-ink: var(--thinking-ink); --color-diff-add-fg: var(--diff-add-fg); --color-diff-del-fg: var(--diff-del-fg); --color-diff-add-bg: var(--diff-add-bg); --color-diff-del-bg: var(--diff-del-bg); --color-diff-add-word: var(--diff-add-word); --color-diff-del-word: var(--diff-del-word); --color-tool-hover: var(--tool-hover); }
 /* The least a sidebar agent row's title keeps behind a tab's or an agent's name (Sidebar ROW_TITLE_MIN): about 4.5
    characters of its 13px text, at the page's text size. */
 :root { --row-title-min: calc(13px * 4.5 * var(--text-scale, 1)); }

@@ -49,8 +49,9 @@ describe("where an agent was opened, as a mark at its row's end (#2526)", () => 
     const html = render({ pane_id: "w1:p1" });
     expect(mark(html)).toMatch(/aria-label="终端"/);
     expect(mark(html)).toMatch(/title="终端"/);
-    expect(mark(html)).toContain("text-source-terminal");
-    expect(mark(html)).toContain("<svg");
+    expect(mark(html)).toContain("text-ink-3");
+    expect(mark(html)).toContain('<rect x="2" y="4" width="20" height="16" rx="2.5"');
+    expect(mark(html)).toContain("m6 9 3 3-3 3M12 15h5");
     expect(mark(html)).not.toMatch(/>终端</); // no visible word any more
     expect(link(html)).toMatch(/title="整理文档\n终端/); // the row's tooltip names it too: the mark hides while hovered
   });
@@ -59,7 +60,7 @@ describe("where an agent was opened, as a mark at its row's end (#2526)", () => 
       const html = render(patch);
       expect(mark(html)).toMatch(/aria-label="桌面端"/);
       expect(mark(html)).toContain("text-source-desktop");
-      expect(mark(html)).not.toContain("text-source-terminal");
+      expect(mark(html)).not.toContain("m6 9 3 3-3 3M12 15h5");
     }
   });
   it("draws Lark's mark for a Lark group, a link to its topic when it has one", () => {
@@ -79,11 +80,11 @@ describe("where an agent was opened, as a mark at its row's end (#2526)", () => 
     expect(mark(render({ pane_id: "w1:p1" }))).toContain("group-hover/row:invisible");
     expect(mark(renderToStaticMarkup(<SessionRow {...rowProps} s={{ ...session, pane_id: "w1:p1" }} active />))).not.toContain("invisible");
   });
-  it("tells terminal and desktop apart by shape too: a bare prompt, and a framed window", () => {
+  it("tells a framed terminal prompt and a desktop window apart by shape", () => {
     const svg = (html: string) => mark(html)!.match(/<svg[^>]*>(.*?)<\/svg>/)![1];
     const terminal = svg(render({ pane_id: "w1:p1" }));
     const desktop = svg(render({ space_kind: "codex_app", source_kind: "codex_history" }));
-    expect(terminal).not.toContain("<rect"); // no frame: a prompt chevron and an underscore
+    expect(terminal).toContain("<rect");
     expect(desktop).toContain("<rect");
     expect(terminal).not.toBe(desktop);
   });

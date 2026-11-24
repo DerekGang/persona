@@ -40,9 +40,11 @@ describe("WorkGroup", () => {
     expect(html).not.toContain("data-work-detail"); // a lazy Collapse: nothing until it opens
   });
 
-  it("done: layers and 已工作 Xs, folded", () => {
+  it("shows a completed summary with the disclosure beside its label", () => {
     const html = renderToStaticMarkup(<WorkGroup g={group([tool("t1", "Bash", { command: "ls" })], false, 65_000)} p={props} />);
     expect(html).toContain(">已工作 1m 5s<");
+    expect(html).toMatch(/>已工作 1m 5s<\/span><svg/);
+    expect(html.match(/<svg/g)).toHaveLength(1);
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("data-live-preview");
   });
