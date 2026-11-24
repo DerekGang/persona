@@ -1226,6 +1226,19 @@ if os.environ.get("MOCK_QUIET"):
         SESSIONS.append(sess("macbook", "e4f6a8c0-0000-4000-8000-%012d" % (i + 1), title, "/Users/me/code/news",
                              "idle", "idle", "news-dev", 9, slot, i + 1, minutes, last, seen_at=ago(minutes=60 * 24)))
 
+# A compact By Project fixture with two same-named projects on one computer (#13558).
+if os.environ.get("MOCK_PROJECT_HEADINGS"):
+    SESSIONS = [
+        sess("macbook", "45e3b8c7-0000-4000-8000-000000000001", "Check the desktop site", "/tmp/site", "working", "working",
+             "site", 85, "review", 1, 0, "Checking an example.", workspace_cwd="/Users/me/Desktop/site"),
+        sess("macbook", "45e3b8c7-0000-4000-8000-000000000002", "Check the code site", "/Users/me/code/site", "working", "working",
+             "site", 86, "build", 1, 1, "Checking another example."),
+        sess("studio", "45e3b8c7-0000-4000-8000-000000000003", "Check the studio site", "/Users/me/work/site", "working", "working",
+             "site", 87, "inspect", 1, 2, "Checking the second computer."),
+        sess("macbook", "45e3b8c7-0000-4000-8000-000000000004", "Loose agent", "/Users/me/notes", "working", "working",
+             "No project", 88, "notes", 1, 3, "A standalone conversation.", space_id=None, workspace_id=None),
+    ]
+
 # MOCK_AGENTS=<n> (n > 1, #5766): the same list n times over (n=3: ~400 agents in 15 spaces), for the cost of a very long list.
 if os.environ.get("MOCK_AGENTS"):
     n = 0
