@@ -2345,6 +2345,10 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   are To Decide (the pager's cards), Needs you (its rows) and, in an Agent's chat, "N pending". An Agent's chat keeps the
   stack; the wrap-up chips stay chips after the entries. The two paragraphs below are the web and Android, and iOS
   before #12831.
+  Android command-input requests (#14568) show the command and its linkable output in the existing chat card and Agents
+  request sheet. The field starts masked when the request calls for it, offers Show / Hide, and stays out of Autofill.
+  Send hands the line to the command and clears the field. Not now replies without a line, and the keyboard action
+  puts the keyboard away. A refusal stays attached to the pending request, including its delivery state.
   What the conversation's tasks ask is a card of its own above the entries (iOS `TaskQuestions` until #12831, #4339 C10): the oldest
   question of their Agents, under its task's name with the ask mark in the needs-you tone and, at the end of that line,
   "N more" for the tasks' other questions; it is answered there, and the next comes up once it is. The three numbers
