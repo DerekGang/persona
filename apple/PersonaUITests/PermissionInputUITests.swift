@@ -30,18 +30,22 @@ final class PermissionInputUITests: XCTestCase {
             XCTAssertTrue(control.isHittable, app.debugDescription)
         }
 
-        let needsYou = app.buttons["agents.filter.needsYou"]
-        XCTAssertTrue(needsYou.waitForExistence(timeout: 20))
-        needsYou.tap()
-        let open = app.buttons["Open to Fill In"]
-        guard open.waitForExistence(timeout: 20) else {
-            XCTFail(app.debugDescription)
+        let helloURL = try XCTUnwrap(URL(string: hub + "/mock/hello"))
+        let paired = expectation(for: NSPredicate { _, _ in
+            guard let data = try? Data(contentsOf: helloURL),
+                  let hello = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  hello["platform"] as? String == "ios-app",
+                  let client = hello["request_client"] as? String else { return false }
+            return client.hasPrefix("ios-app/")
+        }, evaluatedWith: nil)
+        guard XCTWaiter.wait(for: [paired], timeout: 45) == .completed else {
+            XCTFail("The app did not connect and request the fixture approvals")
             return
         }
-        reveal(open)
-        open.tap()
-        if largest, !field.exists, form.exists {
-            for _ in 0..<3 where !field.exists { form.swipeUp(velocity: .slow) }
+        let chat = try XCTUnwrap(URL(string: "persona://open?machine=macbook&session=c0de0000-0000-4000-8000-000000014527"))
+        app.open(chat)
+        if largest, form.waitForExistence(timeout: 20) {
+            for _ in 0..<5 where !field.exists { form.swipeUp(velocity: .slow) }
         }
         guard field.waitForExistence(timeout: 20), send.exists else {
             XCTFail(app.debugDescription)
