@@ -230,12 +230,14 @@ nonisolated struct RepoTree {
         var index: Int
         var parent: String?
         var sessions: [Session]
+        var hasNavigation = false
         var catalog = false
         var workspace: HostWorkspace? = nil
     }
 
     static func build(_ sessions: [Session], machines: [MachineRef], workspaces: [HostWorkspace] = [],
-                      includeEmpty: Bool = true, search: String = "", homes: [MachineRef: String] = [:],
+                      includeEmpty: Bool = true, showEmptyWorkspaces: Bool = false, search: String = "",
+                      navigationSessions: [Session] = [], homes: [MachineRef: String] = [:],
                       knownSessions: [Session]? = nil) -> [Host] {
         var nodes: [String: Node] = [:]
         var loose: [Session] = []
@@ -262,8 +264,10 @@ nonisolated struct RepoTree {
         }
         // Discovery supplies containers, including existing workspaces with no running Agent. Its source-local identity
         // keeps two workspaces in the same directory distinct and permits cross-project Orca lineage.
+        let navigationKeys = Set(navigationSessions.compactMap(catalogKey))
         var herdrKeys = Set<String>()
-        for w in workspaces where w.source == "herdr" && (nodes[w.key] != nil || w.pinnedAt != nil) {
+        for w in workspaces where w.source == "herdr" && (nodes[w.key] != nil || w.pinnedAt != nil ||
+            navigationKeys.contains(w.key) || (showEmptyWorkspaces && w.available && w.online)) {
             var key: String? = w.key
             while let current = key, herdrKeys.insert(current).inserted {
                 key = terminalCatalog[current]?.parentKey
@@ -274,7 +278,14 @@ nonisolated struct RepoTree {
             nodes[w.key] = Node(machine: w.machineRef, path: w.cwd, name: w.title,
                                 index: w.index ?? old?.index ?? Int.max,
                                 parent: w.parentKey ?? (w.index == nil ? old?.parent : nil),
-                                sessions: old?.sessions ?? [], catalog: true, workspace: w)
+                                sessions: old?.sessions ?? [], hasNavigation: navigationKeys.contains(w.key),
+                                catalog: true, workspace: w)
+        }
+        // Pinned Agents rendered in the top Pinned section keep their catalog workspace reachable without duplicating rows.
+        for s in navigationSessions where s.spaceKind == "orca" {
+            if let key = spaceKey(s), nodes[key] != nil {
+                nodes[key]!.hasNavigation = true
+            }
         }
         var parentOf: [String: String] = [:]
         for (key, node) in nodes {
@@ -300,8 +311,12 @@ nonisolated struct RepoTree {
             let below = nested.filter { $0.latestPinnedAt != nil }.sorted {
                 pinPrecedes($0.latestPinnedAt, $1.latestPinnedAt, $0.id, $1.id) == true
             } + nested.filter { $0.latestPinnedAt == nil }
-            let matches = includeEmpty && !search.isEmpty && (n.name + " " + n.path).localizedStandardContains(search)
-            guard includeEmpty && search.isEmpty || matches || !n.sessions.isEmpty || !below.isEmpty else { return nil }
+            let hiddenEmpty = n.workspace?.hiddenByDirectory == true
+            let pinnedEmpty = n.workspace?.pinnedAt != nil
+            let liveEmpty = showEmptyWorkspaces && (n.workspace.map { $0.available && $0.online } ?? true)
+            let allowEmpty = includeEmpty && !hiddenEmpty && (pinnedEmpty || liveEmpty)
+            let matches = allowEmpty && !search.isEmpty && (n.name + " " + n.path).localizedStandardContains(search)
+            guard (allowEmpty && search.isEmpty) || matches || !n.sessions.isEmpty || n.hasNavigation || !below.isEmpty else { return nil }
             let name = n.name.isEmpty ? n.path.split(separator: "/").last.map(String.init) ?? unnamed : n.name
             return Worktree(id: "tree/space/" + key, name: name, path: n.path, main: n.workspace?.isMain ?? false,
                             sessions: n.sessions, children: below, catalog: n.catalog, workspace: n.workspace,
