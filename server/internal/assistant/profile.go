@@ -91,6 +91,9 @@ type Settings struct {
 	MinutesDays *int `json:"minutes_days,omitempty"`
 	// KBTopics: the knowledge base organizes knowledge points by topic (#3783, kb/topics.go). nil is on (the default).
 	KBTopics *bool `json:"kb_topics,omitempty"`
+	// Dashboards: conversations may draft pages the owner keeps in the sidebar (#15017, pages_ui.go). nil is off (the
+	// default); only the owner changes it (a device with full access).
+	Dashboards *bool `json:"dashboards,omitempty"`
 	// MainBackgroundFolded: the apps fold the main conversation's background rounds (another conversation's message,
 	// a scheduled task or follow-up) into one line that opens on request (#4314). nil is on (the default).
 	MainBackgroundFolded *bool `json:"main_background_folded,omitempty"`
@@ -112,6 +115,8 @@ type Settings struct {
 	WorkGuide              *bool    `json:"work_guide,omitempty"`
 	// TodosV2 enables the unified experimental New To-dos & Tasks experience (#14538, #14584). nil is off (the default).
 	TodosV2 *bool `json:"todos_v2,omitempty"`
+	// IntegrationsV2 enables the unified experimental Integrations & Extensions experience (#14802, #14805). nil is off (the default).
+	IntegrationsV2 *bool `json:"integrations_v2,omitempty"`
 	// MeetingAttendanceDefault: the role a meeting recording pre-selects on the phone (off, listener, participant;
 	// docs/assistant/meeting-minutes.md "Attending a meeting"); nil is off.
 	MeetingAttendanceDefault *string `json:"meeting_attendance_default,omitempty"`
@@ -352,8 +357,16 @@ func (s *Service) updateSettingsSaveChecked(ctx context.Context, fn func(*Settin
 	return v, nil
 }
 
-func (v Settings) workGuideOn() bool { return v.WorkGuide != nil && *v.WorkGuide }
-func (v Settings) todosV2On() bool   { return v.TodosV2 != nil && *v.TodosV2 }
+func (v Settings) workGuideOn() bool      { return v.WorkGuide != nil && *v.WorkGuide }
+func (v Settings) todosV2On() bool        { return v.TodosV2 != nil && *v.TodosV2 }
+func (v Settings) integrationsV2On() bool { return v.IntegrationsV2 != nil && *v.IntegrationsV2 }
+
+// integrationsV2On reports whether assistant.integrations_v2 is enabled (off by default).
+// Uses settingsLastGood so hot receive/routing paths never trigger a hub hello RPC.
+func (s *Service) integrationsV2On(ctx context.Context) bool {
+	v, _ := s.settingsLastGood(ctx)
+	return v.integrationsV2On()
+}
 
 // prEventsRouteToAgentOn reports whether assistant.pr_events_route_to_agent is enabled (off by default).
 func (s *Service) prEventsRouteToAgentOn(ctx context.Context) bool {
@@ -795,6 +808,8 @@ type assistantView struct {
 	MinutesDays int `json:"minutes_days"`
 	// KBTopics is in effect, like MainTasksQuiet.
 	KBTopics bool `json:"kb_topics"`
+	// Dashboards is in effect (off until the owner turns it on).
+	Dashboards bool `json:"dashboards"`
 	// MainBackgroundFolded is in effect, like MainTasksQuiet.
 	MainBackgroundFolded    bool `json:"main_background_folded"`
 	FoldRoutineRelayReplies bool `json:"fold_routine_relay_replies"`
@@ -802,6 +817,7 @@ type assistantView struct {
 	RecentTaskChats bool `json:"recent_task_chats"`
 	WorkGuide       bool `json:"work_guide"`
 	TodosV2         bool `json:"todos_v2"`
+	IntegrationsV2  bool `json:"integrations_v2"`
 	// MeetingAttendanceDefault is in effect (off until changed).
 	MeetingAttendanceDefault      string   `json:"meeting_attendance_default"`
 	MeetingTranscriptionDefault   string   `json:"meeting_transcription_default"`
@@ -867,6 +883,7 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 		IdleAutoCompact: s.idleAutoCompact(ctx), IdleAutoCompactMinutes: s.idleAutoCompactMinutes(ctx), IdleAutoCompactTokens: s.idleAutoCompactTokens(ctx),
 		CacheKeepalive: cacheKeepaliveOf(v).Enabled, CacheKeepaliveMinutes: cacheKeepaliveOf(v).IntervalMinutes, CacheKeepaliveMax: cacheKeepaliveOf(v).MaxRequests,
 		IdleReleaseMinutes: s.idleReleaseMinutes(ctx), MeetingAttendanceDefault: meetingAttendanceOf(v), KBTopics: quietOn(v.KBTopics),
+		Dashboards:                  v.Dashboards != nil && *v.Dashboards,
 		MeetingTranscriptionDefault: meetingTranscriptionDefaultOf(v), MeetingGlossary: meetingGlossaryOf(v),
 		MeetingTranscriptionExtension: meetingTranscriptionExtensionOf(v), MeetingTranscriptionReady: s.transcriptionReadyNow(),
 		TaskWorkspacePreference: s.taskWorkspacePreference(ctx),
@@ -875,6 +892,7 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 		FoldRoutineRelayReplies: v.foldRoutineRelayReplies(),
 		WorkGuide:               v.workGuideOn(),
 		TodosV2:                 v.todosV2On(),
+		IntegrationsV2:          v.integrationsV2On(),
 		RecentTaskChats:         v.RecentTaskChats != nil && *v.RecentTaskChats,
 		DeliveryGate:            deliveryGateOf(v),
 		DoneNeedsDelivery:       deliveryGateOf(v) == deliveryGateLive, IdleCloseHours: int(s.idleCloseAfter(ctx) / time.Hour),
