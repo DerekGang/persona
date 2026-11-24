@@ -1,0 +1,101 @@
+name: Verify native command input on iOS
+on:
+  push:
+    branches: ['verify/14567-apple-*']
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 165
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build the Persona app and native test bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+          sudo env DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -runFirstLaunch
+          xcodebuild -version
+          command -v xcodegen >/dev/null || brew install xcodegen
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-14567.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          pins=apple/Packages/PersonaSSH/Package.resolved
+          cp "$pins" "$RUNNER_TEMP/checked-in-pins.json"
+          python3 scripts/ci/apple_resolved.py --tracked "$RUNNER_TEMP/checked-in-pins.json" --staged "$pins" --meta NO --evidence "$RUNNER_TEMP/pins.txt"
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          python3 -c 'from pathlib import Path; p=Path("apple/project.yml"); s=p.read_text(); p.write_text(s.replace("\nschemes:\n", "\nschemes:\n  PersonaCommandInputUI:\n    build:\n      targets:\n        Persona: all\n        PersonaUITests: [test]\n    test:\n      targets: [PersonaUITests]\n", 1))'
+          xcodegen generate --spec apple/project.yml --project apple
+          workspace_pins=apple/Persona.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          mkdir -p "$(dirname "$workspace_pins")"
+          cp "$pins" "$workspace_pins"
+          xcodebuild -quiet -project apple/Persona.xcodeproj -scheme PersonaCommandInputUI \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" -resolvePackageDependencies
+          xcrun simctl list runtimes available
+          sim=$(scripts/app/sim-boot.sh --profile stock --runtime 'iOS 26.2' 'Persona 14567 Command Input')
+          printf 'PERSONA_SIM=%s\nPERSONA_CONFIG=%s\n' "$sim" "$PERSONA_CONFIG" >> "$GITHUB_ENV"
+          xcodebuild build-for-testing -project apple/Persona.xcodeproj -scheme PersonaCommandInputUI -configuration Debug \
+            -destination "id=$sim" -derivedDataPath "$RUNNER_TEMP/derived" -parallel-testing-enabled NO \
+            -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= "ARCHS=$(uname -m)" ONLY_ACTIVE_ARCH=YES
+      - name: Test command input and capture both appearances
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/persona-14567-ios"
+          mkdir -p "$out"
+          test_status=0
+          port=18770
+          for fixture in light-standard dark-standard light-largest dark-largest light-decline light-refuse light-fold; do
+            appearance="${fixture%%-*}"
+            size="${fixture#*-}"
+            mode=send
+            largest=0
+            unmasked=0
+            refuse=0
+            case "$size" in
+              largest) largest=1 ;;
+              decline) mode=decline; unmasked=1 ;;
+              refuse) mode=refuse; refuse=1 ;;
+              fold) mode=fold ;;
+            esac
+            port=$((port + 1))
+            hub="http://127.0.0.1:$port"
+            PORT="$port" MOCK_MANAGERS=1 MOCK_SESSIONS_LIST=1 MOCK_COMMAND_INPUT=1 MOCK_COMMAND_INPUT_UNMASKED="$unmasked" \
+              MOCK_COMMAND_INPUT_REFUSAL="$refuse" python3 -Bu scripts/mock/mock_hub.py > "$out/mock-$fixture.log" 2>&1 &
+            fixture_pid=$!
+            trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+            curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 "$hub/api/v1/health"
+            xcrun simctl ui "$PERSONA_SIM" appearance "$appearance"
+            export TEST_RUNNER_PERSONA_MOCK_HUB="$hub" TEST_RUNNER_PERSONA_STYLE="$appearance" TEST_RUNNER_PERSONA_SHOTS="$out"
+            export TEST_RUNNER_PERSONA_COMMAND_INPUT_MODE="$mode" TEST_RUNNER_PERSONA_COMMAND_INPUT_LARGE="$largest"
+            xcodebuild test-without-building -project apple/Persona.xcodeproj -scheme PersonaCommandInputUI -configuration Debug \
+              -destination "id=$PERSONA_SIM" -derivedDataPath "$RUNNER_TEMP/derived" -parallel-testing-enabled NO \
+              -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
+              -testLanguage en -testRegion US -resultBundlePath "$out/$fixture.xcresult" \
+              -only-testing:PersonaUITests/PermissionInputUITests/testCommandInputUsesOneExplicitReply \
+              2>&1 | tee "$out/$fixture.log" || test_status=1
+            if [[ "$mode" = send && ! -s "$out/command-input-$appearance-$size.png" ]]; then test_status=1; fi
+            kill "$fixture_pid" 2>/dev/null || true
+            wait "$fixture_pid" 2>/dev/null || true
+            trap - EXIT
+          done
+          exit "$test_status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-14567-ios
+          path: ${{ runner.temp }}/persona-14567-ios
+          if-no-files-found: warn
+          retention-days: 2
