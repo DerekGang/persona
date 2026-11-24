@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -126,7 +127,7 @@ class App:
     def settle(self):
         try:
             self.c.call("settle", timeout=3, stable=2, pixels=600)
-        except (CtlError, TimeoutError):
+        except (CtlError, socket.timeout):
             # The following tree read still has to succeed and match the case.
             pass
 
@@ -271,7 +272,8 @@ def req_is(w, s, before):
     if w.get("post") != s.get("post"):
         return False
     if w.get("new_op"):
-        return s.get("op") is not None and s["op"] not in before
+        op = s.get("op")
+        return bool(op) and op not in before
     return s.get("key") == w.get("id")
 
 
