@@ -96,6 +96,11 @@ internal class AppNavigator(
         val from = selectedTab()
         // The route's type only, never its arguments (machine, session, item ids).
         ErrorBreadcrumbs.shared.navigation(key::class.simpleName ?: "route")
+        if (key is ChatRoute && key.decisionSource != null) {
+            val stack = stacks.getValue(from)
+            if (stack.lastOrNull() != key) stack.add(key)
+            return
+        }
         val shown = stacks.mapValues { it.value.lastOrNull() }
         // Reopening the unchanged visible route is idempotent, not a new direct open that invalidates its origin.
         val visibleOrigin = shown[from]?.takeIf { it == key }?.let(openedFrom::get)
