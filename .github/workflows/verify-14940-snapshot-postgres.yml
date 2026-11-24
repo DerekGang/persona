@@ -1,0 +1,47 @@
+name: Verify organization snapshot isolation
+on:
+  push:
+    branches: ['verify/14940-snapshot-postgres']
+permissions:
+  contents: read
+jobs:
+  assistant:
+    name: Snapshot and to-do tests (${{ matrix.build }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [default, persona_core_only]
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: persona
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: persona_test
+        options: --health-cmd "pg_isready -U persona -d persona_test" --health-interval 5s --health-timeout 3s --health-retries 12
+        ports:
+          - 5432/tcp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            sdk/go/go.sum
+      - name: Verify snapshot reads while the seed notification is sent
+        env:
+          PERSONA_TEST_DATABASE_URL: postgres://persona:ci-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/persona_test?sslmode=disable
+          PERSONA_VERIFY_BUILD: ${{ matrix.build }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$PERSONA_VERIFY_BUILD" == persona_core_only ]]; then
+            args=(-tags=persona_core_only)
+          fi
+          go -C server test -race "${args[@]}" -count=10 -timeout=8m ./internal/assistant \
+            -run 'Test(OrganizationSnapshot|TodosEventWaitsForTheRestOfTheWrite|TodoViewPush)' -v
