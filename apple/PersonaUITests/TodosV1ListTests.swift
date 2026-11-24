@@ -34,6 +34,33 @@ final class TodosV1ListTests: XCTestCase {
     /// What the To-dos page draws and whether the gate is on (the app's `todos-page` probe, `-probes YES`).
     private struct PageProbe: Decodable { var v1: Bool; var gate: Bool }
 
+    @MainActor func testOfflineDispatchWaitAndCancel() throws {
+        guard let hub = env["PERSONA_TODOS_HUB"], let directory = env["PERSONA_SHOTS"] else {
+            throw XCTSkip("offline dispatch mock was not configured")
+        }
+        let appearance = env["PERSONA_TODOS_SCHEME"] ?? "light"
+        launch(hub, ["-ui.scheme", appearance, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"], layout: "separate")
+        XCTAssertTrue(element("todos.v1").waitForExistence(timeout: 60), app.debugDescription)
+        let row = element("todos.row.t-offline-dispatch")
+        XCTAssertTrue(row.waitForExistence(timeout: 20), app.debugDescription)
+        let reason = "Will start when Example box is back"
+        XCTAssertTrue(row.label.contains(reason), row.label)
+        XCTAssertFalse(element("todos.section.needs_you").exists)
+        let output = URL(fileURLWithPath: directory)
+        try XCUIScreen.main.screenshot().pngRepresentation.write(to: output.appendingPathComponent("offline-list-\(appearance).png"))
+        row.tap()
+        let cancel = element("todo.cancel-queued-start")
+        XCTAssertTrue(cancel.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.staticTexts[reason].exists, app.debugDescription)
+        try XCUIScreen.main.screenshot().pngRepresentation.write(to: output.appendingPathComponent("offline-detail-\(appearance).png"))
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 15), app.debugDescription)
+        let response = try mock(try XCTUnwrap(URL(string: hub)), "GET", "api/v1/todos/t-offline-dispatch")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: response) as? [String: Any])
+        let todo = try XCTUnwrap(object["todo"] as? [String: Any])
+        XCTAssertEqual(todo["done_by"] as? String, "cancelled")
+    }
+
     /// Back from a pushed page: the system's back button, else the edge swipe.
     @MainActor private func back() {
         let system = app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex.first(where: \.isHittable)

@@ -373,7 +373,8 @@ struct TodosView: View {
             ? { markSeen(todo, after: triage?.last ?? .distantPast) } : nil
         return NavigationLink(value: TodoDetailRoute(id: todo.id)) {
             TodoRow(todo: todo, triage: triage, onToggleDone: { store.toggleDone(todo, done: open) },
-                    onRestore: triage?.section == .shelved ? { restore(todo) } : nil, onSeen: seen, related: related)
+                    onRestore: triage?.section == .shelved ? { restore(todo) } : nil, onSeen: seen, related: related,
+                    dispatchWait: store.views[todo.id]?.dispatchWait)
         }
         .swipeActions(edge: .leading) {
             if triage?.section == .shelved {
@@ -610,10 +611,11 @@ struct TodoRow: View {
     var onSeen: (() -> Void)? = nil
     /// Set for a merged row's lead: its "N related", which opens the others under it.
     var related: TodoRelatedToggle? = nil
+    var dispatchWait: String? = nil
 
     var body: some View {
         let lookup = TodosLogic.makeSessionLookup(AppModel.shared.allSessions(inFront: inFront))
-        let status = TodosLogic.todoStatus(todo, lookup: lookup)
+        let status: TaskState = todo.isDone || dispatchWait == nil ? TodosLogic.todoStatus(todo, lookup: lookup) : .waiting
         let urgent = TodosLogic.mostUrgentAgent(todo, lookup: lookup)
         let activeAgents = todo.agents.filter { $0.releasedAt == nil }
         let lead = TodosLogic.taskLeadAgent(todo, lookup: lookup)
@@ -716,6 +718,11 @@ struct TodoRow: View {
                         .lineLimit(2)
                 } else if let reason = todo.closedReason {
                     Text(reason)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                } else if let dispatchWait, !shownDone {
+                    Text(verbatim: dispatchWait)
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)

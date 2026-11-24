@@ -41847,6 +41847,29 @@
       },
       "extractionState" : "manual"
     },
+    "Cancel Queued Start [Todo Detail]" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel queued start"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待機中の開始をキャンセル"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消排队启动"
+          }
+        }
+      },
+      "extractionState" : "manual"
+    },
     "Cancel Sign-in" : {
       "localizations" : {
         "en" : {

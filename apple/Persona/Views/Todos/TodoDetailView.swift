@@ -34,6 +34,7 @@ struct TodoDetailView: View {
     /// The PR its work is in, opened in the app's link sheet (docs/apple/ios.md, links open inside the app).
     @State private var link: LinkTarget?
     @State private var decisions = TodoDecisionsModel()
+    @State private var cancellingQueuedStart = false
 
     private var currentTodo: TodoItem? {
         store.todo(id: todoID)
@@ -188,10 +189,22 @@ struct TodoDetailView: View {
         AppModel.shared.show(failure)
     }
 
+    private func cancelQueuedStart(_ id: String) async {
+        guard !cancellingQueuedStart else { return }
+        cancellingQueuedStart = true
+        defer { cancellingQueuedStart = false }
+        do {
+            try await store.cancelQueuedTaskStart(id: id)
+        } catch {
+            report(error)
+        }
+    }
+
     private func content(_ todo: TodoItem) -> some View {
         let sessions = model.allSessions(inFront: inFront)
         let lookup = TodosLogic.makeSessionLookup(sessions)
-        let status = TodosLogic.todoStatus(todo, lookup: lookup)
+        let dispatch = todo.isDone ? nil : store.views[todo.id]
+        let status: TaskState = dispatch?.dispatchWait == nil ? TodosLogic.todoStatus(todo, lookup: lookup) : .waiting
         let activeAgents = todo.agents.filter { $0.releasedAt == nil }
         let releasedAgents = todo.agents.filter { $0.releasedAt != nil }
 
@@ -240,6 +253,19 @@ struct TodoDetailView: View {
                             .font(Theme.Font.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let wait = dispatch, let reason = wait.dispatchWait {
+                        Text(verbatim: reason)
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(.secondary)
+                        if wait.dispatchCancel == true {
+                            Button("Cancel Queued Start [Todo Detail]") {
+                                Task { await cancelQueuedStart(todo.id) }
+                            }
+                            .themedButton()
+                            .disabled(cancellingQueuedStart)
+                            .accessibilityIdentifier("todo.cancel-queued-start")
+                        }
                     }
 
                     // Nobody is working on it (#3618): under its state.

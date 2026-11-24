@@ -86,7 +86,7 @@ PROTO_NOW = datetime(2026, 11, 18, 10, 14)  # todos.js NOW
 NO_DATE = datetime(9999, 12, 31, tzinfo=timezone.utc)  # db.SomedayNoDate: Someday with no date
 SECTIONS = ("needs_you", "can_wait", "working", "waiting", "todo", "just_finished", "someday", "done")
 VIEW_KEYS = ("phase", "section", "reason", "line", "since", "next_change_at", "rank", "seen", "inactive", "can_wait",
-             "asks", "steps")  # TodoSummary's order
+             "asks", "steps", "dispatch_wait", "dispatch_cancel")  # TodoSummary's order
 WEATHER = "/Users/me/code/weather-app"
 PICTURES = "/Users/me/Pictures"
 NEWSLETTER = ["writing part 2 of 3", "writing part 3 of 3", "reading it through once more"]  # /mock/churn?todos=1
@@ -1069,6 +1069,15 @@ def route(h, method, path):
     if len(parts) == 4:
         return method == "GET" and send_list(h)
     tid = unquote(parts[4])
+    if method == "POST" and tid == "t-offline-dispatch" and parts[5:] == ["start", "cancel"]:
+        t = find(tid)
+        if t is None:
+            return h.send_json({"error": "not found"}, 404) or True
+        t["done_at"] = t["updated_at"] = stamp(now)
+        t["done_by"] = "cancelled"
+        t["done_reason"] = "Cancelled the queued start"
+        h.send_json({"todo": item(tid, now)})
+        return True
     if len(parts) == 5 and method == "GET":
         if MODE == "old":  # an older hub: the path matches its PATCH and DELETE routes only
             return h.send_json({"error": "method not allowed"}, 405) or True
@@ -1185,6 +1194,15 @@ def install(hub):
     _hub = hub
     c = Clock(hub["NOW"].replace(second=0, microsecond=0))
     rows, views, legacy, settles, sessions, card = prototype(c, hub.get("ASK1", ""))
+    if os.environ.get("MOCK_OFFLINE_DISPATCH") == "1":
+        tid = "t-offline-dispatch"
+        when = c.at(0, 10, 10)
+        rows = [{"id": tid, "title": "Prepare inventory", "notes": "List the project files.",
+                 "done_at": None, "created_at": when, "updated_at": when, "origin": hub.get("ASK1", "main"),
+                 "plan_id": "test-offline-plan", "agents": [], "spaces": []}]
+        views = {tid: {"phase": "waiting", "section": "waiting", "reason": "queued", "since": when,
+                       "dispatch_wait": "Will start when Example box is back", "dispatch_cancel": True}}
+        legacy, settles, sessions = {}, {}, []
     hub["TODOS_INIT"][:] = rows
     hub["TODOS"][:] = copy.deepcopy(rows)
     for n, (run, title, status, state, updated, since, last, pending) in enumerate(sessions, 46):

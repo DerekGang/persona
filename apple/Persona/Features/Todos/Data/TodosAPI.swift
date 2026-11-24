@@ -51,6 +51,11 @@ nonisolated extension APIClient {
 
     private struct TodoAnswer: Decodable, Sendable { var todo: TodoItem }
 
+    func cancelQueuedTaskStart(id: String) async throws -> TodoItem {
+        let data = try await request("POST", "/api/v1/todos/\(Self.todoPath(id))/start/cancel")
+        return try JSON.decoder.decode(TodoAnswer.self, from: data).todo
+    }
+
     /// `GET /api/v1/todos/{id}`: the row as the list has it, its view included. The answer names no manager: the caller
     /// keeps the list's stamp (it asked through the to-do's manager). `TodoNotThere` when the hub has no such route.
     func todo(id: String) async throws -> ViewedTodo {
