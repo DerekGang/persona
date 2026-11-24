@@ -227,6 +227,8 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
     onPlan: (TaskPlan) -> Unit = {},
     /** The main conversation folds background rounds (#4314): Needs you groups its rows by supervising conversation. */
     groupByOrigin: Boolean = false,
+    /** To Decide shares the footer bar but keeps its card count separate from the tray's rows. */
+    leading: (@Composable () -> Unit)? = null,
     /**
      * Under the entries: the pill while the conversation's model operates a Mac. iOS puts it after them in their row
      * (`AssistantActionBar`); beside Android's two entries a phone leaves it too little room for its words.
@@ -527,6 +529,7 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
         // Content-width chips at the leading edge, like the old All / task chips; a large font scrolls rather than wraps.
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("assistant-tray-bar"),
             horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), verticalAlignment = Alignment.CenterVertically) {
+            leading?.invoke()
             // Finished is there while it has rows, or its tray is open (an emptied tray stays reachable till it closes)
             for (tray in AssistantTray.entries.filter {
                 (it != AssistantTray.HeldPushes || showHeldEntry) &&

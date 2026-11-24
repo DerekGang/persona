@@ -2325,7 +2325,7 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   On the web, a card the conversation's own turn waits on (its own session's request, not one of a worker or side
   session folded under it: `lib/turn-asks.ts`, #11794) is never folded: each stands open above the Needs you / In
   progress capsules, all of them at once, and Needs you neither counts nor lists it again. The cards of sessions folded
-  under the conversation keep the stack and the tray as above. iOS and Android keep the stack for both until they follow.
+  under the conversation keep the stack and the tray as above.
   The stack holds the conversation's own cards alone, as one slot on the web: its first card with "2 / 6" (where it stands in the run), the next taking its place when it is answered, and what was just answered one line over it that goes 3 seconds after the last answer (details with the interaction cards in `docs/web/web.md`).
   **To Decide** (iOS and iPadOS, #12831): in an assistant conversation the conversation's own cards and its tasks'
   questions and approvals are one pager over the composer (`QuestionDock`), opened from a **To Decide** entry (zh-Hans
@@ -2343,9 +2343,13 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   pager and a tray show one at a time, the pager stepping aside while a tray is open. The pager is capped as a lone
   question card (#6277), owns the grabber (#12306), and in a voice call stays open at half the page. The three numbers
   are To Decide (the pager's cards), Needs you (its rows) and, in an Agent's chat, "N pending". An Agent's chat keeps the
-  stack; the wrap-up chips stay chips after the entries. The two paragraphs below are the web and Android, and iOS
-  before #12831.
-  What the conversation's tasks ask is a card of its own above the entries (iOS `TaskQuestions` until #12831, #4339 C10): the oldest
+  stack; the wrap-up chips stay chips after the entries.
+  **Android** (#12858) uses the same pager order, collapsed selection, and Skip rules with `AssistantTrayEntry`,
+  `DecisionDock`, and `RequestEditor`. Its task source opens over the Assistant tab, where Back restores the pager.
+  The existing message jump highlights the source. A card from a terminal without a tool ID goes to the latest question
+  in its source chat when available. Agent conversations use their existing pending stack.
+  Before the native pager, what the conversation's tasks asked was a card of its own above the entries (iOS
+  `TaskQuestions`, #4339 C10): the oldest
   question of their Agents, under its task's name with the ask mark in the needs-you tone and, at the end of that line,
   "N more" for the tasks' other questions; it is answered there, and the next comes up once it is. The three numbers
   count three things and say so: "N pending" the conversation's own cards in the stack, "N more" the tasks' other
@@ -2353,15 +2357,8 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   drafts). An open plan is also a card among the conversation's lines (iOS `FeedLine`, web `FeedLineView` #8193, Android on Glass `GlassPlanCard`), at the
   end of the exchange it happened in: its tasks, where each would run, "Start these directly", then Start, Edit and Don't start;
   once started the hand-off cards take its place, and a dismissed one reads "Not started · N tasks". A task's or an Agent's row in the tray opens that task's or Agent's detail, as iOS's rows do, where its page
-  and its cards are; it never brings a card into the stack, which is the conversation's own. The two places of cards
-  share the room the footer leaves above the composer: on Android each takes at most half the page, and with both on
-  screen each has at least half of that room, a card that needs less leaving the rest to the other, so the composer
-  stays on the page. iOS (#9392) caps the task question as it caps the stack (`FooterRoom.cardsRoom`): alone, as a lone
-  question card (#6277), with the conversation's own cards on screen half of that room each, and with the keyboard down a
-  place that takes less (a folded card, #12306) leaves the rest to the other, as on Android; its card fits itself to its
-  share and scrolls inside, its task's name and title row in view. It was uncapped, and on iPad and the open iPhone Duo
-  it took the whole page, its top under the top bar. Before #12306 a folded card kept its half empty, and on the open
-  iPhone Duo held sideways the task's question showed one option and the start of its description.
+  and its cards are. In the former native layout the two places of cards shared the footer room above the composer.
+  Each had half the room when both were open; a shorter card left its unused space to the other (#9392, #12306).
   **Card height by hand** (iOS and iPadOS, #12306): with the keyboard down, a lone question card over the composer (the
   task's question, or the conversation's own lone question; beside each other the task's question) has a grabber on its
   top edge, the sheets' grabber in a strip the card's width (`interaction-grabber`). Dragged, the card follows the finger

@@ -109,21 +109,15 @@ internal fun rememberChatPageRequests(key: SessionKey, chrome: ChatChromeBinding
         chatPageCards(taps.shown(allRequests), key, taskKeys, sideFold, sidePage)
             .sortedBy { if (it.id == chrome.requestId) 0 else 1 }
     }
-    // The cards above the composer, as iOS's footer has them. An Agent's chat: the stack holds every card it waits on.
-    // Persona's conversation: the oldest question of its tasks is a card of its own above the Needs you / In progress
-    // entries (iOS TaskQuestions), under its task's name with "N more"; the stack below them holds the conversation's own
-    // cards alone (#4883), so its "N pending" counts only them (DESIGN_SYSTEM.md 4.8, #4339 C10).
+    // Agent chats keep their stack. The Assistant's pager combines its own cards and its tasks' entries (#12858).
     val assistantChat = renderStyle == ChatRenderStyle.Assistant
-    val taskAsk = remember(assistantChat, requests, taskKeys, taskTodos, sessionList) {
-        if (!assistantChat) null else taskQuestion(requests, taskKeys) { card ->
+    val decisions = remember(assistantChat, requests, key, taskKeys, taskTodos, sessionList) {
+        if (!assistantChat) emptyList() else toDecideCards(requests.filter { it.homeKey == key }, requests, taskKeys) { card ->
             val raw = GroupKeys.rawKey(card.sessionKey)
             taskTodos.firstOrNull { todo -> todo.activeAgents.any { it.key == raw } }?.title?.takeIf(String::isNotBlank)
                 ?: card.taskTitle?.takeIf(String::isNotBlank) ?: card.sessionTitle?.takeIf(String::isNotBlank)
                 ?: sessionList.firstOrNull { it.key == card.sessionKey }?.displayTitle
         }
-    }
-    val stackCards = remember(assistantChat, requests, key) {
-        if (assistantChat) requests.filter { it.homeKey == key } else requests
     }
     val messages = remember(allMessages, key, snapshot.items) {
         chatBubbles(allMessages, key, snapshot.items)
@@ -132,7 +126,7 @@ internal fun rememberChatPageRequests(key: SessionKey, chrome: ChatChromeBinding
         kotlinx.coroutines.flow.MutableStateFlow(emptyMap<String, ComposerDelivery>())
     }).collectAsStateWithLifecycle()
     return ChatPageRequests(machine, tapsState, interactionFeedbackState, answeredHereState, offerNextState, tasks,
-        taskTodosState, taskKeys, taskAgentSessionsState, requests, assistantChat, taskAsk, stackCards, messages,
+        taskTodosState, taskKeys, taskAgentSessionsState, requests, assistantChat, decisions, messages,
         composerDeliveriesState)
 }
 
@@ -149,8 +143,7 @@ internal class ChatPageRequests(
     val taskAgentSessions: State<Map<SessionKey, Session>>,
     val requests: List<Interaction>,
     val assistantChat: Boolean,
-    val taskAsk: TaskQuestion?,
-    val stackCards: List<Interaction>,
+    val decisions: List<ToDecideCard>,
     val messages: List<OutboxMessage>,
     val composerDeliveries: State<Map<String, ComposerDelivery>>,
 )
