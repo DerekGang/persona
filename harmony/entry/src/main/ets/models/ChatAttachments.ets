@@ -893,21 +893,51 @@ export class ChatAttachments {
     return ready.remotePath;
   }
 
+  /** The same native decoder, size ceiling and JPEG packing used for newly picked pictures. */
+  static async forwardImage(bytes: ArrayBuffer): Promise<ChatImagePayload> {
+    const fallback = new ImageLimits();
+    const encoded = await ChatAttachments.encodeSource(image.createImageSource(bytes), '',
+      Math.floor((fallback.requestBytes - 200000) * 0.70 / fallback.perMessage), fallback.maxSide);
+    return new ChatImagePayload(encoded.mime, new util.Base64Helper().encodeToStringSync(new Uint8Array(encoded.data)));
+  }
+
   private async encodeImage(item: ChatAttachment, limits: ImageLimits): Promise<EncodedAttachmentImage | undefined> {
-    let source: image.ImageSource | undefined;
+    const source = image.createImageSource(item.localPath);
+    let info: image.ImageInfo;
+    try {
+      info = await source.getImageInfo();
+    } catch (_) {
+      await source.release().catch((): void => {});
+      throw new Error('chat_attachment_image_unsupported');
+    }
+    if (info.mimeType !== 'image/jpeg' && info.mimeType !== 'image/png' || info.mimeType !== item.mime ||
+      info.size.width <= 0 || info.size.height <= 0 || info.size.width * info.size.height > MAX_IMAGE_PIXELS) {
+      await source.release().catch((): void => {});
+      throw new Error('chat_attachment_image_unsupported');
+    }
+    const maxDimension = Math.max(info.size.width, info.size.height);
+    if (maxDimension <= limits.maxSide && item.size <= limits.imageBytes) {
+      const data = this.readOwnedFile(item.localPath, limits.imageBytes);
+      await source.release().catch((): void => {});
+      return { mime: info.mimeType, data: data };
+    }
+    // encodeSource owns and releases the source on every path.
+    return ChatAttachments.encodeSource(source, item.mime, limits.imageBytes, limits.maxSide, true);
+  }
+
+  private static async encodeSource(source: image.ImageSource, expectedMime: string, byteBudget: number,
+    maxSide: number = 1600, allowOriginalFallback: boolean = false): Promise<EncodedAttachmentImage | undefined> {
     let packer: image.ImagePacker | undefined;
     let pixels: image.PixelMap | undefined;
     try {
-      source = image.createImageSource(item.localPath);
       const info = await source.getImageInfo();
-      if (info.mimeType !== 'image/jpeg' && info.mimeType !== 'image/png') throw new Error('chat_attachment_image_unsupported');
-      if (info.mimeType !== item.mime || info.size.width <= 0 || info.size.height <= 0 || info.size.width * info.size.height > MAX_IMAGE_PIXELS)
+      if (expectedMime && (expectedMime !== 'image/jpeg' && expectedMime !== 'image/png' || info.mimeType !== expectedMime))
+        throw new Error('chat_attachment_image_unsupported');
+      if (info.size.width <= 0 || info.size.height <= 0 || info.size.width * info.size.height > MAX_IMAGE_PIXELS)
         throw new Error('chat_attachment_image_unsupported');
       const maxDimension = Math.max(info.size.width, info.size.height);
-      if (maxDimension <= limits.maxSide && item.size <= limits.imageBytes)
-        return { mime: info.mimeType, data: this.readOwnedFile(item.localPath, limits.imageBytes) };
       packer = image.createImagePacker();
-      const edge = Math.min(limits.maxSide, maxDimension);
+      const edge = Math.min(maxSide, maxDimension);
       const attempts = edge > 1280 ? 3 : 2;
       let packed = false;
       for (let attempt = 0; attempt < attempts; attempt++) {
@@ -921,12 +951,15 @@ export class ChatAttachments {
         await pixels.release(); pixels = undefined;
         if (data.byteLength > 0) {
           packed = true;
-          if (data.byteLength <= limits.imageBytes) return { mime: 'image/jpeg', data: data };
+          if (data.byteLength <= byteBudget) return { mime: 'image/jpeg', data: data };
         }
       }
       if (!packed) throw new Error('chat_attachment_image_unsupported');
+      // A picked photo that packs but cannot meet the hub's inline byte limit goes back as its untouched file.
       return undefined;
     } catch (error) {
+      if (allowOriginalFallback && !(error instanceof Error && error.message.startsWith('chat_attachment_')))
+        return undefined;
       if (error instanceof Error && error.message.startsWith('chat_attachment_')) throw error;
       throw new Error('chat_attachment_image_unsupported');
     } finally {
