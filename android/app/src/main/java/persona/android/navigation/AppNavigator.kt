@@ -102,9 +102,19 @@ internal class AppNavigator(
         // The route's type only, never its arguments (machine, session, item ids).
         ErrorBreadcrumbs.shared.navigation(key::class.simpleName ?: "route")
         if (key is ChatRoute && key.decisionSource != null) {
-            val stack = stacks.getValue(from)
-            if (stack.lastOrNull() != key) stack.add(key)
-            return
+            // To Decide lives in the Assistant (Persona) host. Stack the source over that host only when it is
+            // actually present; a late callback while the user sits on inbox/settings must not append to whatever
+            // tab is selected, otherwise Back returns to an unrelated page (review P1).
+            val personaStack = stacks.getValue(AppTab.Persona)
+            val personaTop = personaStack.lastOrNull()
+            // Already inside an Assistant conversation: stack the source directly above it for one-step Back.
+            // At the Persona root: build root Assistant -> source. Any other top means Persona is on an unrelated
+            // page, so fall through to normal routing rather than mutating an unexpected stack.
+            if (personaTop is ChatRoute || personaTop is AssistantRoute) {
+                if (personaStack.lastOrNull() != key) personaStack.add(key)
+                onSelectTab(AppTab.Persona)
+                return
+            }
         }
         val shown = stacks.mapValues { it.value.lastOrNull() }
         // Reopening the unchanged visible route is idempotent, not a new direct open that invalidates its origin.

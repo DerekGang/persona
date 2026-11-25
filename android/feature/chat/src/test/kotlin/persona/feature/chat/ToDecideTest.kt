@@ -23,7 +23,8 @@ class ToDecideTest {
         val foreign = card("foreign", "unrelated", "question", 0)
         val cards = toDecideCards(listOf(own, otherOwn), listOf(tool, plan, old, foreign, own),
             setOf(SessionKey("host", "task"), SessionKey("host", "main"))) { "Example task" }
-        assertEquals(listOf("own", "other", "old", "tool", "plan"), cards.map { it.id })
+        // plan/tool share a timestamp; the id tie-breaker makes the order deterministic (plan before tool).
+        assertEquals(listOf("own", "other", "old", "plan", "tool"), cards.map { it.id })
         assertFalse(cards.first().task)
         assertEquals("Example task", cards.last().title)
     }
@@ -49,6 +50,39 @@ class ToDecideTest {
         state.show(listOf("one", "two"), "two")
         assertFalse(state.isCollapsed(listOf("one", "two")))
         assertEquals(1, state.selected(listOf("one", "two")))
+    }
+
+    @Test fun equalTimestampsUseStableSessionAndIdTieBreakers() {
+        val sameTime = "2026-01-01T00:00:05Z"
+        val z = cardAt("z-id", "task", "question", sameTime)
+        val a = cardAt("a-id", "task", "question", sameTime)
+        val m = cardAt("m-id", "task", "question", sameTime)
+        val later = cardAt("later", "task", "question", "2026-01-01T00:00:09Z")
+        val cards = toDecideCards(emptyList(), listOf(z, later, m, a),
+            setOf(SessionKey("host", "task"))) { null }
+        assertEquals(listOf("a-id", "m-id", "z-id", "later"), cards.map { it.id })
+    }
+
+    @Test fun collapsedChoiceThatDisappearsResetsInsteadOfReusingTheStaleIndex() {
+        val state = ToDecideState()
+        val ids = listOf("one", "two", "three")
+        state.select(ids, 2)
+        state.collapse(ids)
+        // The saved card is handled elsewhere/expires while collapsed.
+        val remaining = listOf("one", "two")
+        val resolved = state.selected(remaining)
+        state.reconcile(remaining, resolved)
+        assertEquals(0, state.selected(remaining))
+    }
+
+    @Test fun openPagerKeepsFollowingTheSlotWhenTheSavedCardLeaves() {
+        val state = ToDecideState()
+        val ids = listOf("one", "two", "three")
+        state.select(ids, 0)
+        val afterAnswer = listOf("two", "three")
+        val resolved = state.selected(afterAnswer)
+        state.reconcile(afterAnswer, resolved)
+        assertEquals(0, state.selected(afterAnswer))
     }
 
     @Test fun skipReasonsAndDotWindowMatchTheCardKindAndPosition() {
@@ -84,6 +118,10 @@ class ToDecideTest {
 
     private fun card(id: String, session: String, kind: String, second: Int): Interaction = Interaction(
         id = id, machineId = "host", sessionId = session, kind = kind, createdAt = "2026-01-01T00:00:0${second}Z",
+    )
+
+    private fun cardAt(id: String, session: String, kind: String, createdAt: String): Interaction = Interaction(
+        id = id, machineId = "host", sessionId = session, kind = kind, createdAt = createdAt,
     )
 
     private fun question(id: String, text: String): Item = Item(id, role = "assistant", kind = "tool_use", toolUseId = id,

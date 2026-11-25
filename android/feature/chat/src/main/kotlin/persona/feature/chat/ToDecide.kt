@@ -38,7 +38,13 @@ internal fun toDecideCards(
 ): List<ToDecideCard> = (
     own.map { ToDecideCard(it, task = false) } + requests.asSequence()
         .filter { it.sessionKey in taskKeys && it.kind in TaskDecisionKinds }
-        .sortedBy { parseTime(it.createdAt) ?: Instant.MIN }
+        // Coarse or unparsed timestamps tie often; stable session then id keys keep oldest-first deterministic.
+        .sortedWith(
+            compareBy<Interaction> { parseTime(it.createdAt) ?: Instant.MIN }
+                .thenBy { it.sessionKey.machineId }
+                .thenBy { it.sessionKey.sessionId }
+                .thenBy { it.id },
+        )
         .map { ToDecideCard(it, task = true, title = taskTitle(it)) }
         .toList()
     ).distinctBy(ToDecideCard::id)
@@ -52,6 +58,22 @@ internal class ToDecideState(current: String? = null, index: Int = 0, folded: Se
     fun selected(ids: List<String>): Int? {
         if (ids.isEmpty()) return null
         return current?.let(ids::indexOf)?.takeIf { it >= 0 } ?: index.coerceIn(ids.indices)
+    }
+
+    /**
+     * Mirror [select] while the pager is open, but when the saved id disappeared while collapsed reset to the first
+     * card instead of letting [selected] reuse the stale numeric index for an unrelated request.
+     */
+    fun reconcile(ids: List<String>, resolved: Int?) {
+        if (resolved == null) return
+        if (current != null && current !in ids && folded.isNotEmpty()) {
+            current = null
+            index = 0
+            return
+        }
+        val target = ids.getOrNull(resolved) ?: return
+        current = target
+        index = resolved
     }
 
     fun select(ids: List<String>, index: Int) {
@@ -118,6 +140,9 @@ internal fun decisionSourceItem(items: List<Item>, toolUseId: String?, ownQuesti
 internal fun ChatSnapshot.readyForDecisionSource(offline: Boolean): Boolean =
     !loading && !loadingOlder && (verified || offline)
 
+/** Bound the wait for a verified first snapshot so a chat page cannot collect forever (review P2). */
+private const val DECISION_SOURCE_READY_TIMEOUT_MS = 15_000L
+
 /** Resolve the task's tool call once, then let the existing message-jump machinery scroll and highlight it. */
 @Composable
 internal fun JumpToDecisionSource(key: SessionKey, source: DecisionSource?, repository: ChatRepository, offline: Boolean) {
@@ -125,7 +150,11 @@ internal fun JumpToDecisionSource(key: SessionKey, source: DecisionSource?, repo
     LaunchedEffect(key, source, repository, offline) {
         if (source == null || handled) return@LaunchedEffect
         val snapshots = repository.observe(key)
-        var page = snapshots.first { it.readyForDecisionSource(offline) }
+        // A hub that never verifies must not suspend this collector for the whole life of the page. Leaving
+        // handled=false lets an offline/connection change retry; the timeout only ends this attempt.
+        var page = withTimeoutOrNull(DECISION_SOURCE_READY_TIMEOUT_MS) {
+            snapshots.first { it.readyForDecisionSource(offline) }
+        } ?: return@LaunchedEffect
         var item = decisionSourceItem(page.items, source.toolUseId)
         var pages = 0
         while (item == null && !offline && !source.toolUseId.isNullOrBlank() && page.hasOlder && pages < MESSAGE_JUMP_PAGE_LIMIT) {

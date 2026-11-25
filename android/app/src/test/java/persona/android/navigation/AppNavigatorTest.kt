@@ -35,6 +35,21 @@ class AppNavigatorTest {
         assertEquals(listOf(AssistantRoute, assistant), stacks.getValue(AppTab.Persona))
     }
 
+    @Test fun decisionSourceDoesNotStackOverAnUnrelatedInboxPage() {
+        selected = AppTab.Agents
+        stacks.getValue(AppTab.Agents).add(InboxRoute)
+        val source = ChatRoute("machine", "task", ConversationKind.Agent, subagentDetail = true,
+            decisionSource = DecisionSource("asking-call"))
+
+        navigator.navigate(source)
+
+        // Even while an unrelated inbox page is selected, the source belongs to the Assistant host: it opens above
+        // Persona's root and switches tab, instead of being appended over the inbox where Back would be wrong.
+        assertEquals(AppTab.Persona, selected)
+        assertEquals(listOf(AssistantRoute, source), stacks.getValue(AppTab.Persona))
+        assertEquals(listOf(AgentsRoute, InboxRoute), stacks.getValue(AppTab.Agents))
+    }
+
     @Test fun secondarySettingsPagesReturnToTheOriginalTabAndPage() {
         val origin = ChatRoute("machine", "session")
         val settingsPages = listOf(SettingsRoute, SettingsPageRoute(SettingsPage.About), PairingRoute, ConnectionSettingsRoute)

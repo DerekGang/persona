@@ -267,7 +267,7 @@ private fun ChatPage(
     val decisionIndex = decisionState.selected(decisionIds)
     val showingDecision = decisionIndex != null && assistantTrays.expanded == null && !decisionState.isCollapsed(decisionIds)
     var requestOpened by rememberSaveable(chrome.requestId) { mutableStateOf(false) }
-    LaunchedEffect(decisionIds, decisionIndex) { decisionIndex?.let { decisionState.select(decisionIds, it) } }
+    LaunchedEffect(decisionIds, decisionIndex) { decisionState.reconcile(decisionIds, decisionIndex) }
     LaunchedEffect(chrome.requestId, decisionIds) {
         val request = chrome.requestId ?: return@LaunchedEffect
         if (!requestOpened && request in decisionIds) {

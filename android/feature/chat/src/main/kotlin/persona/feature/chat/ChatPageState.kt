@@ -112,7 +112,12 @@ internal fun rememberChatPageRequests(key: SessionKey, chrome: ChatChromeBinding
     // Agent chats keep their stack. The Assistant's pager combines its own cards and its tasks' entries (#12858).
     val assistantChat = renderStyle == ChatRenderStyle.Assistant
     val decisions = remember(assistantChat, requests, taps, allRequests, key, taskKeys, taskTodos, sessionList) {
-        if (!assistantChat) emptyList() else toDecideCards(requests.filter { it.homeKey == key }, taps.shown(allRequests), taskKeys) { card ->
+        if (!assistantChat) emptyList() else toDecideCards(
+            // Own cards come from the unfiltered home list: side-folded or task-homed requests must still surface in
+            // To Decide instead of being dropped by the page/task filter applied to `requests` (review P1).
+            taps.shown(allRequests).filter { it.homeKey == key },
+            taps.shown(allRequests), taskKeys,
+        ) { card ->
             val raw = GroupKeys.rawKey(card.sessionKey)
             taskTodos.firstOrNull { todo -> todo.activeAgents.any { it.key == raw } }?.title?.takeIf(String::isNotBlank)
                 ?: card.taskTitle?.takeIf(String::isNotBlank) ?: card.sessionTitle?.takeIf(String::isNotBlank)
