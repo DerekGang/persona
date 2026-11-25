@@ -35,14 +35,16 @@ func errNotFound(path string) error {
 }
 
 func (n *Node) entry(path, cwd string) (editEntry, error) {
-	shown := strings.TrimSpace(path)
+	// A name may legally end in whitespace: keep the exact path, and refuse only a whitespace-only one instead of
+	// redirecting it to a trimmed neighbour (#4567).
+	if strings.TrimSpace(path) == "" {
+		return editEntry{}, errors.New("empty path")
+	}
+	shown := path
 	if s := strings.TrimRight(shown, "/"); s != "" {
 		shown = s
 	}
 	abs := n.expandPath(shown, cwd)
-	if abs == "" {
-		return editEntry{}, errors.New("empty path")
-	}
 	abs = absPath(abs)
 	parent, err := n.realPath(filepath.Dir(abs))
 	if err != nil {

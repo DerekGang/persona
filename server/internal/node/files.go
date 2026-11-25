@@ -53,9 +53,10 @@ type FileContent struct {
 }
 
 // resolvePath turns a path as the conversation wrote it into one on this machine: ~ is the home, a relative path is
-// in cwd. "" when there is nothing to resolve it against.
+// in cwd. "" when there is nothing to resolve it against. The path's bytes are kept exactly: a name may legally end in
+// whitespace, and trimming it would resolve a different entry (#4567).
 func (n *Node) resolvePath(path, cwd string) string {
-	path = proto.ExpandHome(strings.TrimSpace(path), n.home)
+	path = proto.ExpandHome(path, n.home)
 	switch {
 	case path == "":
 		return ""
@@ -81,8 +82,8 @@ func (n *Node) readFile(path, cwd string, offset int64, stream bool) (*FileConte
 	if n.fileReadDeps != nil && n.fileReadDeps.isSysfs != nil {
 		isSysfs = n.fileReadDeps.isSysfs
 	}
-	asked := strings.TrimSpace(path)
-	if asked == "" {
+	asked := path
+	if strings.TrimSpace(asked) == "" {
 		return nil, fmt.Errorf("empty path")
 	}
 	path = n.resolvePath(asked, cwd)
@@ -476,9 +477,9 @@ func (n *Node) resolveDir(path, cwd string) (shown, real string, err error) {
 }
 
 // expandPath turns a path as the app gives it (~/…, relative to cwd, empty for cwd itself) into a clean one; "" when
-// there is nothing to go by. Links are not followed.
+// there is nothing to go by. Links are not followed. Its bytes are kept exactly (see resolvePath); a whitespace-only
+// path is not the cwd.
 func (n *Node) expandPath(path, cwd string) string {
-	path = strings.TrimSpace(path)
 	switch {
 	case path == "":
 		path = cwd

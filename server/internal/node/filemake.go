@@ -141,7 +141,11 @@ func (n *Node) writeText(p fileMakeParams) (*fileWritten, error) {
 		return nil, &rpc.Error{Code: proto.CodeTooLarge, Message: fmt.Sprintf("too large to save from here (over %d MB)", maxWriteBytes>>20)}
 	}
 	if p.Create {
-		dir, name := filepath.Split(strings.TrimRight(strings.TrimSpace(p.Path), "/"))
+		if strings.TrimSpace(p.Path) == "" {
+			return nil, errors.New("empty path")
+		}
+		// Keep a directory whose name legally ends in whitespace: trimming it would create the file in its neighbour.
+		dir, name := filepath.Split(strings.TrimRight(p.Path, "/"))
 		if err := checkName(name); err != nil {
 			return nil, err
 		}
