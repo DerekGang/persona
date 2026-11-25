@@ -32,10 +32,11 @@ import (
 // An API error agy streams as message text becomes the turn's error, kept in history and settled idle (#14628), 231 B (264,443 B).
 // Antigravity GENERIC timestamp header stripping (#13662) adds 176 B (264,619 B).
 // Subsequent runtime fixes on main (#15269, #15275, #13312, #12952, #15475) bring the total to 265,362 B.
-// Claude Code plugin 0.3.1 reports classic hook pass-over and disables permission bridging under managed settings (#15546), 2,112 B; the merged total is 266,894 B.
+// Antigravity shared ACP exit cleanup (#15756) and always-allow permission choices (#15785) bring the total to 265,686 B.
+// Claude Code plugin 0.3.1 reports classic hook pass-over and disables permission bridging under managed settings (#15546), 2,112 B; the merged total is 267,055 B.
 // Raise the budget only for code a runtime needs, never to embed the packages raw again.
 func TestDistBudget(t *testing.T) {
-	const budget = 266_894
+	const budget = 267_055
 	_, out := generateIntegrations(t)
 	entries, err := os.ReadDir(out)
 	if err != nil {
