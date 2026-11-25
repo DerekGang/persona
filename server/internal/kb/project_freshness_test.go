@@ -427,16 +427,41 @@ func TestProjectEvidenceReadsTheMostRecentlyCompressedChats(t *testing.T) {
 	}
 }
 
-// Chats summarized at the same moment keep the order they were attached in, so the input stays stable.
-func TestProjectEvidenceChatsKeepAttachmentOrderOnTies(t *testing.T) {
+// Chats summarized at the same moment keep the order they were attached in, so the input stays stable; and a project
+// that fits in the window keeps its attachment order, since every attached chat is read either way.
+func TestProjectEvidenceChatsKeepAttachmentOrder(t *testing.T) {
 	e := testEngine(t, nil)
-	for _, id := range []string{"a", "b", "c"} {
-		if err := e.Store.PutChat(&Chat{ID: id, CompressedAt: projectEvidenceTime}); err != nil {
+	var ids []string
+	for i := range projectEvidenceChatsMost + 2 {
+		id := fmt.Sprintf("lark-c%d", i)
+		at := projectEvidenceTime.Add(time.Duration(i) * time.Hour)
+		if i >= projectEvidenceChatsMost {
+			at = projectEvidenceTime.Add(time.Duration(projectEvidenceChatsMost+2) * time.Hour)
+		}
+		if err := e.Store.PutChat(&Chat{ID: id, CompressedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	// The last two were attached in this order and share the newest time, so they come out in attachment order.
+	p := &Project{Slug: "garden", Chats: ids}
+	if got := e.projectEvidenceChats(p); !slices.Equal([]string{got[0].id, got[1].id}, []string{"lark-c8", "lark-c9"}) {
+		t.Fatalf("ties = %s then %s, want lark-c8 then lark-c9", got[0].id, got[1].id)
+	}
+
+	// Fewer attached chats than the window: all of them are read, in attachment order, whatever their summaries say.
+	small := testEngine(t, nil)
+	for i, id := range []string{"a", "b", "c"} {
+		if err := small.Store.PutChat(&Chat{ID: id, CompressedAt: projectEvidenceTime.Add(time.Duration(i) * time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	p := &Project{Slug: "garden", Chats: []string{"a", "b", "c"}}
-	if got := e.projectEvidenceChats(p); !slices.Equal(got, []string{"a", "b", "c"}) {
-		t.Fatalf("ties = %v, want the attachment order", got)
+	got := small.projectEvidenceChats(&Project{Slug: "garden", Chats: []string{"a", "b", "c"}})
+	var order []string
+	for _, c := range got {
+		order = append(order, c.id)
+	}
+	if !slices.Equal(order, []string{"a", "b", "c"}) {
+		t.Fatalf("small project = %v, want the attachment order", order)
 	}
 }
