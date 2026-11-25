@@ -142,6 +142,55 @@ describe("ChatSearch with controlled results and matching", () => {
     expect(stopped?.()).toBe(true);
     expect(onStopLoadEarlier).toHaveBeenCalledTimes(1);
   });
+
+  it("fences an earlier-load run across close/reopen and a newer run", async () => {
+    const runs: Array<{
+      onPage: (n: number) => void;
+      stopped: () => boolean;
+      resolve: (outcome: LoadOutcome) => void;
+    }> = [];
+    const onLoadEarlier = vi.fn((onPage: (n: number) => void, stopped: () => boolean) =>
+      new Promise<LoadOutcome>((resolve) => {
+        runs.push({ onPage, stopped, resolve });
+      }));
+    const onStopLoadEarlier = vi.fn();
+    const props = base({ query: "parser", results: found, hasMore: true, onLoadEarlier, onStopLoadEarlier });
+
+    await mount(props);
+    await act(async () => button(t("chat-chatsearch.load_earlier")).click());
+    expect(runs).toHaveLength(1);
+    act(() => runs[0].onPage(1));
+    expect(document.body.textContent).toContain(t("chat-chatsearch.loading_pages", { count: 1 }));
+
+    await mount({ ...props, open: false });
+    expect(runs[0].stopped()).toBe(true);
+    expect(onStopLoadEarlier).toHaveBeenCalledTimes(1);
+    await mount({ ...props, open: true });
+    expect(button(t("chat-chatsearch.load_earlier"))).toBeDefined();
+
+    await act(async () => button(t("chat-chatsearch.load_earlier")).click());
+    expect(runs).toHaveLength(2);
+    expect(runs[0].stopped()).toBe(true);
+    expect(runs[1].stopped()).toBe(false);
+    act(() => runs[1].onPage(2));
+    expect(document.body.textContent).toContain(t("chat-chatsearch.loading_pages", { count: 2 }));
+
+    act(() => runs[0].onPage(9));
+    await act(async () => {
+      runs[0].resolve("Stale run");
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain(t("chat-chatsearch.loading_pages", { count: 2 }));
+    expect(document.body.textContent).not.toContain("Stale run");
+    expect(button(t("chat-chatsearch.stop_loading"))).toBeDefined();
+
+    await act(async () => {
+      runs[1].resolve("New run finished");
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("New run finished");
+    expect(button(t("chat-chatsearch.load_earlier"))).toBeDefined();
+  });
 });
 
 describe("ChatSearch default compatibility", () => {

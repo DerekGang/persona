@@ -118,16 +118,34 @@ export function ChatSearch({
   const loadedPages = earlierControlled ? controlledLoadedPages ?? 0 : pages;
   const notice = earlierControlled ? controlledNotice ?? null : loadNotice;
   const stop = useRef(false);
+  const loadRun = useRef(0);
+  const wasOpen = useRef(open);
   // the panel closing stops a run going
   useEffect(() => {
-    if (!open) stop.current = true;
-  }, [open]);
+    const closed = wasOpen.current && !open;
+    wasOpen.current = open;
+    if (!open) {
+      stop.current = true;
+      loadRun.current++;
+      if (closed && loadingEarlier) onStopLoadEarlier?.();
+      if (!earlierControlled) {
+        setLoading(false);
+        setPages(0);
+        setLoadNotice(null);
+      }
+    }
+  }, [open, loadingEarlier, earlierControlled, onStopLoadEarlier]);
+  useEffect(() => () => {
+    stop.current = true;
+    loadRun.current++;
+  }, []);
   const stopLoading = () => {
     stop.current = true;
     onStopLoadEarlier?.();
   };
   const loadEarlier = async () => {
     if (!onLoadEarlier) return;
+    const run = ++loadRun.current;
     stop.current = false;
     if (!earlierControlled) {
       setLoading(true);
@@ -136,13 +154,13 @@ export function ChatSearch({
     }
     try {
       const outcome = await onLoadEarlier((n) => {
-        if (!earlierControlled) setPages(n);
-      }, () => stop.current);
-      if (!earlierControlled) setLoadNotice(outcome);
+        if (loadRun.current === run && !earlierControlled) setPages(n);
+      }, () => stop.current || loadRun.current !== run);
+      if (loadRun.current === run && !earlierControlled) setLoadNotice(outcome);
     } catch {
-      if (!earlierControlled) setLoadNotice(t("chat-chatview.search_load_failed"));
+      if (loadRun.current === run && !earlierControlled) setLoadNotice(t("chat-chatview.search_load_failed"));
     } finally {
-      if (!earlierControlled) setLoading(false);
+      if (loadRun.current === run && !earlierControlled) setLoading(false);
     }
   };
 
