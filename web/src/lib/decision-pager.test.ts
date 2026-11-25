@@ -59,7 +59,7 @@ describe("assistant decisions", () => {
       folded_under: agent.session_id, folded_under_machine_id: agent.machine_id, folded_as: "worker" });
     const held = { ...child, id: "held", delegating: true };
     const lookup = makeSessionLookup([{ machine_id: agent.machine_id, session_id: agent.session_id,
-      title: "Agent", status: "needs_you", todo: { id: tied.id, title: tied.title } }]);
+      cwd: "/project", title: "Agent", status: "needs_you", todo: { id: tied.id, title: tied.title } }]);
     const input = { conversation: "assistant", manager: "local", todos: [first, tied],
       interactions: [child, held], lookup, feed: [], plans: {} };
     expect(taskDecisionCards(input)).toEqual([{ interaction: child, taskTitle: tied.title }]);

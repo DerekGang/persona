@@ -450,7 +450,7 @@ export function QuestionCard({ ix, canApprove, onAnswer }: { ix: Interaction; ca
       looking={looking}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={!canApprove || onAnswer ? undefined : () => resolve(ix, { dismiss: true })}
+      onDismiss={onAnswer ? undefined : () => resolve(ix, { dismiss: true })}
       skip={canSkip ? { run: skip, error: skipError } : undefined}
       busy={busy}
       footer={
