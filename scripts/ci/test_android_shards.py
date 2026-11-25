@@ -98,6 +98,10 @@ class ShardTests(unittest.TestCase):
     def test_workflow_lanes_and_cache_write_policy(self):
         workflow = (ROOT / ".github/workflows/android-test.yml").read_text()
         self.assertIn("permissions:\n  actions: read\n  contents: read", workflow)
+        for caller in ("ci.yml", "release-pr.yml"):
+            with self.subTest(caller=caller):
+                source = (ROOT / ".github/workflows" / caller).read_text()
+                self.assertRegex(source, r"(?m)^permissions:\n  actions: read\n  contents: read\n")
         match = re.search(r"lane: \[([^\]]+)\]", workflow)
         self.assertIsNotNone(match)
         self.assertEqual([value.strip() for value in match[1].split(",")], list(CI_LANES))

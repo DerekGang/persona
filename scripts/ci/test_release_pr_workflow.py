@@ -27,7 +27,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
         self.assertIn("github.event.pull_request.user.login == 'chyroc'", text)
         self.assertIn("github.event.pull_request.merge_commit_sha", text)
-        self.assertEqual(self.pr["permissions"], {"contents": "read", "checks": "write"})
+        self.assertEqual(self.pr["permissions"], {"actions": "read", "contents": "read", "checks": "write"})
 
     def test_all_platforms_feed_the_one_verified_plan(self):
         jobs = self.pr["jobs"]
