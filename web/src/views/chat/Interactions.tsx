@@ -196,7 +196,7 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
         {decision && (
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-ink-2" data-decision-actions>
             {decision.navigation}
-            {(skip || noSkip) && <button type="button" data-card-answer disabled={busy || Boolean(noSkip)}
+            {(skip || noSkip) && <button type="button" data-card-answer={noSkip ? undefined : ""} disabled={busy || Boolean(noSkip)}
               onClick={skip?.run} className="touch-hit enabled:hover:text-ink disabled:opacity-45">{t(skip?.error ? "assistant-tasks.retry" : "chat-interactions.decision_skip_label")}</button>}
             {noSkip && <span className="basis-full text-ink-3">{noSkip}</span>}
             {skip?.error && <span role="alert" className="basis-full text-attention">{skip.error}</span>}
@@ -208,7 +208,7 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
         </div>
         {/* Hand back (dismiss) leaves the request to the computer's terminal, and the hub takes no other answer for this card
             after it: so it says so in words on a row of its own (Android's action row), never a bare × that reads as "close" */}
-        {onDismiss && (!decision || (decision.task && decision.interaction.kind === "question")) && (
+        {onDismiss && (!decision || (decision.interaction.kind === "question" && (decision.task || !decision.interaction.can_cancel))) && (
           <div className="mt-2 flex">
             <button
               type="button"
@@ -450,7 +450,7 @@ export function QuestionCard({ ix, canApprove, onAnswer }: { ix: Interaction; ca
       looking={looking}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={onAnswer ? undefined : () => resolve(ix, { dismiss: true })}
+      onDismiss={!canApprove || onAnswer ? undefined : () => resolve(ix, { dismiss: true })}
       skip={canSkip ? { run: skip, error: skipError } : undefined}
       busy={busy}
       footer={

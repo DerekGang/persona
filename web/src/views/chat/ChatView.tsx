@@ -24,7 +24,7 @@ import { acknowledgeLaunch } from "../../lib/new-agent";
 import { useRuntimeSession } from "../../lib/runtime-session";
 import { ArchivedNotice, SessionDetailNotice } from "../../ui/SessionDetailNotice";
 import { isBackgroundSupervisor } from "../../lib/background-supervisor";
-import { getSession, getState, hubHas, listenSession, refresh, refreshTodos, saveMutes, upsertSession, useStore, viewSession } from "../../lib/store";
+import { getSession, getState, hubHas, listenSession, refresh, refreshTodos, saveMutes, taskSessionLookup, upsertSession, useStore, viewSession } from "../../lib/store";
 import { useStoreRows } from "../../lib/store-rows";
 import { codexThreadOf, waitsForFirstMessage } from "../../lib/codex-waiting";
 import { foldRows } from "../../lib/folded-rows";
@@ -2413,7 +2413,12 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   }, [interactions, elsewhere, embedded, mid, sid]);
   // A card belongs to the visible child pane, To Decide, or the stack. A task request must not appear in two places.
   const turnSplit = useMemo(() => (assistant ? splitTurnAsks(docked, mid, sid) : { turn: [], rest: docked }), [assistant, docked, mid, sid]);
-  const allTaskDecisions = useStoreRows((s) => assistant ? taskDecisionCards(s.todos, s.interactions, sid, skillManager) : []);
+  const decisionPlans = useFeed((s) => assistant ? s.plans : undefined);
+  const decisionSlots = useFeed((s) => assistant ? s.taskCards[sid] : undefined);
+  const allTaskDecisions = useStoreRows((s) => assistant && decisionPlans && s.interactions.length ? taskDecisionCards({
+    conversation: sid, main: s.assistant?.main, manager: skillManager, todos: s.todos, interactions: s.interactions,
+    lookup: taskSessionLookup(s), feed: taskFeed, plans: decisionPlans, cards: decisionSlots,
+  }) : []);
   const taskDecisions = useMemo(() => allTaskDecisions.filter(({ interaction }) => !elsewhere(interaction)), [allTaskDecisions, elsewhere]);
   const taskDecisionKeys = useMemo(() => new Set(taskDecisions.map(({ interaction }) => decisionKey(interaction))), [taskDecisions]);
   const stacked = useMemo(() => turnSplit.rest.filter((ix) => !taskDecisionKeys.has(decisionKey(ix))), [turnSplit.rest, taskDecisionKeys]);

@@ -1,6 +1,8 @@
+import { taskRequestRouting, type AssistantEntriesInput } from "./assistant-entries";
+import { taskCardSlots } from "./task-cards";
 import { byTime } from "./times";
 import type { Interaction } from "./types";
-import type { Todo } from "./todos";
+import type { SessionLookup } from "./todos";
 
 export type DecisionCard = { interaction: Interaction; taskTitle?: string };
 
@@ -8,21 +10,23 @@ export function decisionKey(ix: Interaction): string {
   return JSON.stringify([ix.manager ?? "", ix.machine_id, ix.session_id, ix.id]);
 }
 
-export function taskDecisionCards(todos: readonly Todo[], interactions: readonly Interaction[], conversation: string, manager?: string): DecisionCard[] {
-  const tasks = new Map<string, string>();
-  for (const todo of todos) {
-    if (todo.origin !== conversation || todo.done_at || (todo.manager && todo.manager !== manager)) continue;
-    for (const agent of todo.agents ?? []) {
-      if (agent.released_at) continue;
-      const key = JSON.stringify([todo.manager ?? "", agent.machine_id, agent.session_id]);
-      if (!tasks.has(key)) tasks.set(key, todo.title);
-    }
-  }
-  return interactions.flatMap((interaction) => {
-    const key = JSON.stringify([interaction.manager ?? "", interaction.machine_id, interaction.session_id]);
-    const taskTitle = tasks.get(key);
-    return taskTitle === undefined ? [] : [{ interaction, taskTitle }];
+type TaskDecisionInput = Pick<AssistantEntriesInput, "conversation" | "main" | "manager" | "todos" | "interactions" | "feed" | "plans" | "cards"> & { lookup: SessionLookup };
+
+export function taskDecisionCards(input: TaskDecisionInput): DecisionCard[] {
+  const { conversation, main, manager, feed, plans, cards, lookup } = input;
+  const interactions = input.interactions.filter((ix) => !ix.manager || ix.manager === manager);
+  if (!interactions.length) return [];
+  const todos = input.todos.filter((todo) => !todo.manager || todo.manager === manager);
+  const byTodo = new Map(todos.map((todo) => [todo.id, todo]));
+  const slots = taskCardSlots(conversation, cards ?? [], feed, plans, todos, main === conversation);
+  const orderedTasks = slots.flatMap((card) => {
+    const todo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
+    return todo ? [todo] : [];
   });
+  const { requestsFor } = taskRequestRouting(orderedTasks, interactions, lookup);
+  return orderedTasks.flatMap((todo) => todo.origin === conversation
+    ? requestsFor(todo).asks.map((interaction) => ({ interaction, taskTitle: todo.title }))
+    : []);
 }
 
 /** Keep the conversation's blocking cards in their incoming order, then show the tasks' oldest cards. */

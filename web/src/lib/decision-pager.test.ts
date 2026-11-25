@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decisionCards, decisionDots, decisionKey, decisionPosition, taskDecisionCards } from "./decision-pager";
 import { blockedDecisionSkip, decisionSource } from "./decision-details";
 import type { Interaction, Item } from "./types";
+import { makeSessionLookup } from "./todos";
 
 function question(id: string, extra: Partial<Interaction> = {}): Interaction {
   return { id, machine_id: "machine", session_id: "session", kind: "question", ...extra };
@@ -39,9 +40,30 @@ describe("assistant decisions", () => {
     const own = question("task-card", { manager: "local" });
     const differentManager = question("wrong-manager", { manager: "remote" });
     const released = question("old-card", { manager: "local", session_id: "released" });
-    expect(taskDecisionCards([todo], [own, differentManager, released], "assistant", "local")).toEqual([{ interaction: own, taskTitle: todo.title }]);
-    expect(taskDecisionCards([todo], [own], "another-assistant", "local")).toEqual([]);
-    expect(taskDecisionCards([todo], [own], "assistant", "remote")).toEqual([]);
+    const input = { conversation: "assistant", manager: "local", todos: [todo],
+      interactions: [own, differentManager, released], feed: [], plans: {}, lookup: makeSessionLookup([]) };
+    expect(taskDecisionCards(input)).toEqual([{ interaction: own, taskTitle: todo.title }]);
+    expect(taskDecisionCards({ ...input, conversation: "another-assistant" })).toEqual([]);
+    expect(taskDecisionCards({ ...input, manager: "remote" })).toEqual([]);
+  });
+
+  it("uses a cross-machine child's task home and does not surface supervisor-held requests", () => {
+    const time = "2026-11-24T11:00:00Z";
+    const agent = { machine_id: "machine", session_id: "session", linked_at: time };
+    const makeTodo = (id: string, title: string) => ({
+      id, title, origin: "assistant", manager: "local", created_at: time, updated_at: time, agents: [agent],
+    });
+    const first = makeTodo("a", "Other task");
+    const tied = makeTodo("z", "Task with the child");
+    const child = question("child", { manager: "local", machine_id: "other-machine", session_id: "worker",
+      folded_under: agent.session_id, folded_under_machine_id: agent.machine_id, folded_as: "worker" });
+    const held = { ...child, id: "held", delegating: true };
+    const lookup = makeSessionLookup([{ machine_id: agent.machine_id, session_id: agent.session_id,
+      title: "Agent", status: "needs_you", todo: { id: tied.id, title: tied.title } }]);
+    const input = { conversation: "assistant", manager: "local", todos: [first, tied],
+      interactions: [child, held], lookup, feed: [], plans: {} };
+    expect(taskDecisionCards(input)).toEqual([{ interaction: child, taskTitle: tied.title }]);
+    expect(taskDecisionCards({ ...input, main: "assistant", todos: [first, { ...tied, origin: "other-assistant" }] })).toEqual([]);
   });
 
   it("keeps terminal requests and approvals in their existing answer channels", () => {

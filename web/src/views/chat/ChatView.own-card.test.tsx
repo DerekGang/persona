@@ -285,6 +285,17 @@ describe("a Persona conversation's own approval card (#4883)", () => {
 // An approval the chat's own turn waits on starts in the visible decision pager. Needs you does not need a second copy.
 // A worker's or side session's card does not hold the turn and stays folded in the stack and behind Needs you.
 describe("cards the chat's own turn waits on", () => {
+  it("keeps an unavailable skip outside the answers and a legacy question's hand-back available", async () => {
+    Object.assign(getState(), { interactions: [bash, question], answered: {} });
+    act(() => root.render(<ChatView mid="hub" sid="c1" assistant onToggleSidebar={() => {}} />));
+    await flush();
+    const disabledSkip = card(bash.id)?.querySelector<HTMLButtonElement>("[data-decision-actions] button[disabled]");
+    expect(disabledSkip).not.toBeNull();
+    expect(disabledSkip?.hasAttribute("data-card-answer")).toBe(false);
+    act(() => above()!.querySelector<HTMLButtonElement>(`[aria-label="${t("assistant-tasks.next_decision")}"]`)!.click());
+    expect(card(question.id)?.querySelector(`[aria-label="${t("chat-interactions.hand_back")}"]`)).not.toBeNull();
+  });
+
   const above = () => host.querySelector("[data-decision-pager]");
   const before = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 

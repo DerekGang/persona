@@ -132,14 +132,8 @@ export function decisionLaterKey(todo: Todo): string {
   return `decision:${todo.manager || ""}:${todo.id}:${decisionRound(todo)}`;
 }
 
-export function assistantEntries(input: AssistantEntriesInput): AssistantEntries {
-  const { conversation, main, todos, sessions, interactions, plans, feed } = input;
-  const now = input.now ?? Date.now();
-  const lookup = withInteractionLookup(input.lookup ?? makeSessionLookup(sessions), interactions);
-  const isMain = !!main && main === conversation;
-  const byTodo = new Map(todos.map((todo) => [todo.id, todo]));
-  // failed starts whose work finished in a related to-do: closed, as the To-dos page has them (#3713)
-  const superseded = supersededFailedStarts(todos);
+/** A request's task home is shared by Needs you and the decision pager. */
+export function taskRequestRouting(todos: readonly Todo[], interactions: readonly Interaction[], lookup: SessionLookup) {
   const asksOf = new Map<string, Interaction[]>();
   for (const ix of [...interactions].sort((a, b) => byTime(a.created_at, b.created_at) || a.id.localeCompare(b.id))) {
     // a child session's card is asked under its parent (#5120): the parent's task or Agent row holds it
@@ -147,25 +141,13 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     asksOf.set(k, [...(asksOf.get(k) ?? []), ix]);
   }
 
-  const asking: NeedsYouItem[] = [];
-  const deciding: { item: NeedsYouItem; rank: number; at: string }[] = [];
-  const open: { item: RunningItem; rank: number; at: string }[] = [];
-  const shelved: { item: RunningItem; at: string }[] = [];
-  const parked: { item: RunningItem; at: string }[] = [];
-  const review: { item: RunningItem; rank: number; at: string }[] = [];
-  const finished: FinishedItem[] = [];
-  const folded = new Set<string>();
-  const slots = taskCardSlots(conversation, input.cards ?? [], feed, plans, todos, isMain);
-  const openOf = openByView(todos);
   const activeAgents = (todo: Todo) => (todo.done_at ? [] : (todo.agents ?? []).filter((a) => !a.released_at));
   const homeAgents = (todo: Todo) => (todo.done_at ? [] : (todo.agents ?? []).filter((a) => !a.released_at || parkInteractionID(todo)));
   // One home per request (docs/design/DESIGN_SYSTEM.md 4.8): an Agent several of these tasks list asks under one of them,
   // the task the hub ties its session to (`todo`), else the first that lists it. The others neither repeat its cards nor
   // wait on the user for them; they are in progress.
   const listing = new Map<string, string[]>();
-  for (const card of slots) {
-    const todo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
-    if (!todo) continue;
+  for (const todo of todos) {
     for (const a of homeAgents(todo)) {
       const k = sessionKey(a.machine_id, a.session_id);
       const ids = listing.get(k) ?? [];
@@ -177,23 +159,52 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     const tied = lookup(mid, sid)?.todo?.id;
     return tied && ids?.includes(tied) ? tied : ids?.[0];
   };
-  for (const card of slots) {
-    const sourceTodo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
-    // a plan task with no to-do yet is its plan's row (below); a to-do the hub no longer sends is finished
-    if (!sourceTodo) continue;
+  function requestsFor(sourceTodo: Todo) {
     const candidate = linkedParkInteraction(sourceTodo, interactions);
     const linkedHome = candidate ? homeOf(candidate.machine_id, candidate.session_id) : undefined;
     const todo = linkedHome !== undefined && linkedHome !== sourceTodo.id ? withoutParkInteraction(sourceTodo) : sourceTodo;
     const active = activeAgents(todo);
     const own = active.filter((a) => homeOf(a.machine_id, a.session_id) === todo.id);
-    // what the task waits on the user for is its own Agents' (an Agent another task holds asks there)
-    const status = own.length < active.length ? withNeeds(entryStatus(todo, lookup, plans), todoStatus({ ...todo, agents: own }, lookup)) : entryStatus(todo, lookup, plans);
     const linked = linkedParkInteraction(todo, interactions);
     // a card the task's supervising conversation holds (delegating) is that conversation's until it passes it up
     const routed = own.flatMap((a) => asksOf.get(sessionKey(a.machine_id, a.session_id)) ?? []);
     const ownAsks = routed.filter((ix) => !ix.delegating);
     const asks = linked && !ownAsks.some((ix) => ix.id === linked.id) ?
       [...ownAsks, linked].sort((a, b) => byTime(a.created_at, b.created_at) || a.id.localeCompare(b.id)) : ownAsks;
+    return { todo, active, own, linked, routed, ownAsks, asks };
+  }
+  return { asksOf, requestsFor };
+}
+
+export function assistantEntries(input: AssistantEntriesInput): AssistantEntries {
+  const { conversation, main, todos, sessions, interactions, plans, feed } = input;
+  const now = input.now ?? Date.now();
+  const lookup = withInteractionLookup(input.lookup ?? makeSessionLookup(sessions), interactions);
+  const isMain = !!main && main === conversation;
+  const byTodo = new Map(todos.map((todo) => [todo.id, todo]));
+  // failed starts whose work finished in a related to-do: closed, as the To-dos page has them (#3713)
+  const superseded = supersededFailedStarts(todos);
+  const asking: NeedsYouItem[] = [];
+  const deciding: { item: NeedsYouItem; rank: number; at: string }[] = [];
+  const open: { item: RunningItem; rank: number; at: string }[] = [];
+  const shelved: { item: RunningItem; at: string }[] = [];
+  const parked: { item: RunningItem; at: string }[] = [];
+  const review: { item: RunningItem; rank: number; at: string }[] = [];
+  const finished: FinishedItem[] = [];
+  const folded = new Set<string>();
+  const slots = taskCardSlots(conversation, input.cards ?? [], feed, plans, todos, isMain);
+  const openOf = openByView(todos);
+  const { asksOf, requestsFor } = taskRequestRouting(slots.flatMap((card) => {
+    const todo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
+    return todo ? [todo] : [];
+  }), interactions, lookup);
+  for (const card of slots) {
+    const sourceTodo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
+    // a plan task with no to-do yet is its plan's row (below); a to-do the hub no longer sends is finished
+    if (!sourceTodo) continue;
+    const { todo, active, own, linked, routed, ownAsks, asks } = requestsFor(sourceTodo);
+    // what the task waits on the user for is its own Agents' (an Agent another task holds asks there)
+    const status = own.length < active.length ? withNeeds(entryStatus(todo, lookup, plans), todoStatus({ ...todo, agents: own }, lookup)) : entryStatus(todo, lookup, plans);
     const key = `task:${todo.id}`;
     const bucket = cardBucket(card, todo, plans, lookup, now, input.restored?.get(todo.id) ?? 0, superseded.has(todo.id));
     const countsOpen = bucket === "open";
