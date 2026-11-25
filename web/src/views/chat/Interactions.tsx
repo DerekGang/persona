@@ -159,7 +159,6 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
   const queue = useContext(QueueSlot);
   const decision = useContext(DecisionCardContext);
   const noSkip = decision?.skipHint;
-  const legacyDecision = decision && !decision.task && decision.interaction.kind === "question" && !decision.interaction.can_cancel;
   // Hand back leaves the request to the computer's terminal.
   const handBack = onDismiss && (
     <button
@@ -173,6 +172,8 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
       {t("chat-interactions.hand_back")}
     </button>
   );
+  const bottomHandBack = !decision || (decision.task && decision.interaction.kind === "question");
+  const decisionHandBack = Boolean(decision) && !skip && !bottomHandBack;
   return (
     <div {...(cardKeys?.root ?? { tabIndex: -1 })} ref={tapGuard ? mergeRefs(tapGuard.ref, cardKeys?.root?.ref) : cardKeys?.root?.ref} data-pending-card aria-label={title} className="shrink-0 overflow-clip rounded-card bg-surface shadow-card outline-none focus-visible:ring-2 focus-visible:ring-accent" style={{ animation: `fade-up 350ms ${EASE} both` }}>
       <div className="px-3.5 pt-3 pb-2.5">
@@ -210,7 +211,7 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
         {decision && (
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-ink-2" data-decision-actions>
             {decision.navigation}
-            {legacyDecision && handBack}
+            {decisionHandBack && handBack}
             {(skip || noSkip) && <button type="button" data-card-answer={noSkip ? undefined : ""} disabled={busy || Boolean(noSkip)}
               onClick={skip?.run} className="touch-hit enabled:hover:text-ink disabled:opacity-45">{t(skip?.error ? "assistant-tasks.retry" : "chat-interactions.decision_skip_label")}</button>}
             {noSkip && <span className="basis-full text-ink-3">{noSkip}</span>}
@@ -221,7 +222,7 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
           {from && <p data-permission-from title={from} className="mb-2 truncate text-[12px] leading-snug text-ink-3">{from}</p>}
           {children}
         </div>
-        {handBack && (!decision || (decision.task && decision.interaction.kind === "question")) && (
+        {handBack && bottomHandBack && (
           <div className="mt-2 flex">{handBack}</div>
         )}
         <div ref={end} aria-hidden className="h-0" />
