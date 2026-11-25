@@ -17,6 +17,7 @@ export function MediaPlayer({
   className,
   compact,
   onDuration,
+  resolveDownloadURL,
 }: {
   mid: string;
   path: string;
@@ -26,9 +27,12 @@ export function MediaPlayer({
   compact?: boolean;
   /** The file's real length once the browser has read its header (seconds). */
   onDuration?: (seconds: number) => void;
+  /** A controlled panel resolves media instead of the default file/download route. */
+  resolveDownloadURL?: (path: string, options: { inline?: boolean }) => string;
 }) {
   const [failed, setFailed] = useState(false);
-  const src = fileDownloadURL(mid, path, cwd, { inline: true });
+  const downloadURL = (options: { inline?: boolean }) => resolveDownloadURL ? resolveDownloadURL(path, options) : fileDownloadURL(mid, path, cwd, options);
+  const src = downloadURL({ inline: true });
   const reportDuration = (d: number) => {
     if (Number.isFinite(d) && d > 0) onDuration?.(d);
   };
@@ -38,7 +42,7 @@ export function MediaPlayer({
         <Icon name="info" size={18} className="text-ink-3" />
         <div className="text-[13px] text-ink">{kind === "video" ? t("ui-media.video_unplayable") : t("ui-media.audio_unplayable")}</div>
         <div className="max-w-72 text-[12px] leading-relaxed text-ink-3">{kind === "video" ? t("ui-media.video_hint") : t("ui-media.audio_hint")}</div>
-        <a href={fileDownloadURL(mid, path, cwd)} download className="mt-1 inline-flex h-7 items-center gap-1 rounded-[8px] bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap text-ink shadow-btn hover:bg-hover">
+        <a href={downloadURL({})} download className="mt-1 inline-flex h-7 items-center gap-1 rounded-[8px] bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap text-ink shadow-btn hover:bg-hover">
           <Icon name="arrowDown" size={13} />
           {t("ui-media.download")}
         </a>

@@ -26,27 +26,16 @@ const CATEGORY: Record<SearchCategory, string> = {
 };
 
 const NO_RESULTS: ChatSearchResults = { hits: [], truncated: false };
+const NO_ITEMS: Item[] = [];
 
 /** How a run of "Load earlier" ended: null reached the start; a string says why it stopped. */
 export type LoadOutcome = string | null;
 
-export function ChatSearch({
-  open,
-  query,
-  onQuery,
-  items,
-  foldsLoading = false,
-  foldsPartial = false,
-  rounds,
-  hasMore,
-  onLoadEarlier,
-  onPick,
-  onClose,
-}: {
+export interface ChatSearchProps {
   open: boolean;
   query: string;
   onQuery: (q: string) => void;
-  items: Item[];
+  items?: Item[];
   /** The folded work is being fetched for the search (useFoldSearch). */
   foldsLoading?: boolean;
   /** Some folded work is not searched (its fetch failed, or past the budget). */
@@ -55,39 +44,94 @@ export function ChatSearch({
   rounds: number;
   hasMore: boolean;
   /** Pages back (up to 20) until the start, an error or `stop()`; `onPage` counts the pages in. */
-  onLoadEarlier: (onPage: (n: number) => void, stopped: () => boolean) => Promise<LoadOutcome>;
+  onLoadEarlier?: (onPage: (n: number) => void, stopped: () => boolean) => Promise<LoadOutcome>;
   onPick: (hit: ChatSearchHit) => void;
   onClose: () => void;
-}) {
+  /** Results for the current query, owned by a controlled panel. */
+  results?: ChatSearchResults;
+  /** Controlled searching state; by default it follows the debounced query. */
+  searching?: boolean;
+  /** A controlled matcher used with the default debounce instead of searchChat. */
+  searchItems?: (items: Item[], query: string) => ChatSearchResults;
+  /** The default wait after the last key before matching. */
+  settleMs?: number;
+  /** Controlled earlier-load state. Supplying any of these keeps ChatSearch from owning that state. */
+  loadingEarlier?: boolean;
+  loadedPages?: number;
+  notice?: string | null;
+  /** Called when Stop is chosen, in addition to setting the stopping flag passed to onLoadEarlier. */
+  onStopLoadEarlier?: () => void;
+}
+
+export function ChatSearch({
+  open,
+  query,
+  onQuery,
+  items = NO_ITEMS,
+  foldsLoading = false,
+  foldsPartial = false,
+  rounds,
+  hasMore,
+  onLoadEarlier,
+  onPick,
+  onClose,
+  results: controlledResults,
+  searching: controlledSearching,
+  searchItems,
+  settleMs = SETTLE_MS,
+  loadingEarlier: controlledLoadingEarlier,
+  loadedPages: controlledLoadedPages,
+  notice: controlledNotice,
+  onStopLoadEarlier,
+}: ChatSearchProps) {
   const [applied, setApplied] = useState(query);
   useEffect(() => {
-    const id = window.setTimeout(() => setApplied(query), SETTLE_MS);
+    if (controlledResults !== undefined) return;
+    const id = window.setTimeout(() => setApplied(query), settleMs);
     return () => clearTimeout(id);
-  }, [query]);
-  const searching = applied !== query;
-  // only while the panel shows: the query stays after a pick, and the chat keeps changing under it
-  const results = useMemo(() => (open ? searchChat(items, applied) : NO_RESULTS), [open, items, applied]);
+  }, [query, settleMs, controlledResults]);
+  const searching = controlledSearching ?? (controlledResults === undefined && applied !== query);
+  // only while the panel shows: the query stays after a pick, and the chat keeps changing under it. A controlled
+  // result set or matcher replaces searchChat but keeps the same debounce path.
+  const results = useMemo(() => {
+    if (controlledResults !== undefined) return controlledResults;
+    return open ? (searchItems ?? searchChat)(items, applied) : NO_RESULTS;
+  }, [open, items, applied, controlledResults, searchItems]);
   const groups = useMemo(() => groupHits(results.hits), [results.hits]);
 
   const [loading, setLoading] = useState(false);
   const [pages, setPages] = useState(0);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [loadNotice, setLoadNotice] = useState<string | null>(null);
+  const earlierControlled = controlledLoadingEarlier !== undefined || controlledLoadedPages !== undefined || controlledNotice !== undefined;
+  const loadingEarlier = earlierControlled ? controlledLoadingEarlier ?? false : loading;
+  const loadedPages = earlierControlled ? controlledLoadedPages ?? 0 : pages;
+  const notice = earlierControlled ? controlledNotice ?? null : loadNotice;
   const stop = useRef(false);
   // the panel closing stops a run going
   useEffect(() => {
     if (!open) stop.current = true;
   }, [open]);
+  const stopLoading = () => {
+    stop.current = true;
+    onStopLoadEarlier?.();
+  };
   const loadEarlier = async () => {
+    if (!onLoadEarlier) return;
     stop.current = false;
-    setLoading(true);
-    setPages(0);
-    setNotice(null);
+    if (!earlierControlled) {
+      setLoading(true);
+      setPages(0);
+      setLoadNotice(null);
+    }
     try {
-      setNotice(await onLoadEarlier(setPages, () => stop.current));
+      const outcome = await onLoadEarlier((n) => {
+        if (!earlierControlled) setPages(n);
+      }, () => stop.current);
+      if (!earlierControlled) setLoadNotice(outcome);
     } catch {
-      setNotice(t("chat-chatview.search_load_failed"));
+      if (!earlierControlled) setLoadNotice(t("chat-chatview.search_load_failed"));
     } finally {
-      setLoading(false);
+      if (!earlierControlled) setLoading(false);
     }
   };
 
@@ -95,14 +139,14 @@ export function ChatSearch({
   const footer = (
     <div className="flex w-full min-w-0 items-center gap-3">
       <span role="status" className="min-w-0 flex-1 truncate text-[12px] text-ink-3">
-        {loading ? t("chat-chatsearch.loading_pages", { count: pages }) : notice ?? (foldsLoading ? t("chat-chatsearch.searching_folds") : foldsPartial ? t("chat-chatsearch.folds_partial") : hasMore ? "" : t("chat-chatsearch.at_start"))}
+        {loadingEarlier ? t("chat-chatsearch.loading_pages", { count: loadedPages }) : notice ?? (foldsLoading ? t("chat-chatsearch.searching_folds") : foldsPartial ? t("chat-chatsearch.folds_partial") : hasMore ? "" : t("chat-chatsearch.at_start"))}
       </span>
-      {loading ? (
-        <Button tone="quiet" onClick={() => (stop.current = true)}>
+      {loadingEarlier ? (
+        <Button tone="quiet" onClick={stopLoading}>
           {t("chat-chatsearch.stop_loading")}
         </Button>
       ) : (
-        hasMore && (
+        hasMore && onLoadEarlier && (
           <Button onClick={() => void loadEarlier()}>
             {t("chat-chatsearch.load_earlier")}
           </Button>

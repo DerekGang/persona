@@ -4,7 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import { fileThumbURL } from "../../lib/api";
 import { documentKind, isDarkPage, isDocument, MAX_DOCUMENT_CARDS } from "../../lib/documents";
-import { usePathLinks } from "../../lib/path-presence";
+import { usePathLinks, type PathStat } from "../../lib/path-presence";
 import { bytes } from "../../lib/format";
 import { openPanel } from "../../lib/panel";
 import { formatDuration, mediaKindOf, replyPaths, type AttachedFile } from "../../lib/turns";
@@ -19,7 +19,19 @@ import { t } from "../../i18n";
 const FOLD_AT = 4;
 const FOLDED = 3;
 
-export function FileCards({ files, mid, align = "end" }: { files: AttachedFile[]; mid: string; align?: "start" | "end" }) {
+export interface FileCardsProps {
+  files: AttachedFile[];
+  mid: string;
+  align?: "start" | "end";
+  /** An explicit working directory for file URLs and the default file panel. */
+  cwd?: string;
+  /** A controlled panel opens the file instead of the default file panel. */
+  onOpenFile?: (path: string) => void;
+  /** A controlled panel resolves media instead of the default file/download route. */
+  resolveDownloadURL?: (path: string, options: { inline?: boolean }) => string;
+}
+
+export function FileCards({ files, mid, align = "end", cwd, onOpenFile, resolveDownloadURL }: FileCardsProps) {
   const [all, setAll] = useState(false);
   if (!files.length) return null;
   // the files sent with your message (#8361): past four, three and "N more files", opened and folded in place
@@ -28,7 +40,7 @@ export function FileCards({ files, mid, align = "end" }: { files: AttachedFile[]
   return (
     <div className={align === "end" ? "flex max-w-full flex-col items-end gap-1.5" : "flex max-w-full flex-col items-start gap-1.5"}>
       {shown.map((f) => (
-        <FileCard key={f.path} f={f} mid={mid} />
+        <FileCard key={f.path} f={f} mid={mid} cwd={cwd} onOpenFile={onOpenFile} resolveDownloadURL={resolveDownloadURL} />
       ))}
       {folds && (
         <button
@@ -46,7 +58,19 @@ export function FileCards({ files, mid, align = "end" }: { files: AttachedFile[]
   );
 }
 
-function FileCard({ f, mid }: { f: AttachedFile; mid: string }) {
+function FileCard({
+  f,
+  mid,
+  cwd,
+  onOpenFile,
+  resolveDownloadURL,
+}: {
+  f: AttachedFile;
+  mid: string;
+  cwd?: string;
+  onOpenFile?: FileCardsProps["onOpenFile"];
+  resolveDownloadURL?: FileCardsProps["resolveDownloadURL"];
+}) {
   // the length the file really has wins over the one the message says (it may be rounded, or wrong)
   const [real, setReal] = useState<number | undefined>(undefined);
   const duration = real ?? f.duration;
@@ -54,7 +78,16 @@ function FileCard({ f, mid }: { f: AttachedFile; mid: string }) {
   if (f.kind === "video" || f.kind === "audio")
     return (
       <figure className="m-0 flex w-[min(360px,100%)] flex-col gap-1">
-        <MediaPlayer mid={mid} path={f.path} kind={f.kind} className={f.kind === "video" ? "max-h-[420px] w-full" : undefined} compact onDuration={setReal} />
+        <MediaPlayer
+          mid={mid}
+          path={f.path}
+          cwd={cwd}
+          kind={f.kind}
+          className={f.kind === "video" ? "max-h-[420px] w-full" : undefined}
+          compact
+          onDuration={setReal}
+          resolveDownloadURL={resolveDownloadURL}
+        />
         <figcaption className="flex min-w-0 items-center gap-1.5 px-1 text-[11.5px] text-ink-3">
           <span className="min-w-0 truncate">{f.name}</span>
           {meta && <span className="shrink-0 tabular-nums">{meta}</span>}
@@ -64,7 +97,7 @@ function FileCard({ f, mid }: { f: AttachedFile; mid: string }) {
   return (
     <button
       type="button"
-      onClick={() => openPanel({ kind: "file", mid, path: f.path })}
+      onClick={() => onOpenFile ? onOpenFile(f.path) : openPanel({ kind: "file", mid, path: f.path, ...(cwd ? { cwd } : {}) })}
       className="flex max-w-[360px] min-w-0 items-center gap-2 rounded-[12px] bg-inset px-3 py-2 text-left shadow-hairline hover:bg-hover"
       title={f.path}
     >
@@ -76,29 +109,109 @@ function FileCard({ f, mid }: { f: AttachedFile; mid: string }) {
 }
 
 /** Files an answer names by absolute path that are there on the machine, as cards under it (iOS links the same). */
-export function ReplyFiles({ text, mid, cwd }: { text: string; mid: string; cwd?: string }) {
+export interface ReplyFilesProps {
+  text: string;
+  mid: string;
+  cwd?: string;
+  /** Explicit files skip path parsing and the default path-presence store. */
+  files?: AttachedFile[];
+  /** Controlled path stats skip the default path-presence store. */
+  resolvePathStat?: (path: string) => PathStat | undefined;
+  onOpenFile?: FileCardsProps["onOpenFile"];
+  resolveThumbURL?: DocumentCardsProps["resolveThumbURL"];
+  resolveDownloadURL?: FileCardsProps["resolveDownloadURL"];
+}
+
+export function ReplyFiles({ files, text, ...props }: ReplyFilesProps) {
+  if (files !== undefined) return <ReplyFilesView {...props} files={files} controlled />;
+  return <ParsedReplyFiles {...props} text={text} />;
+}
+
+function ParsedReplyFiles({ text, mid, cwd, resolvePathStat, ...props }: Omit<ReplyFilesProps, "files">) {
   const paths = useMemo(() => replyPaths(text), [text]);
+  if (resolvePathStat) return <ResolvedReplyFiles {...props} mid={mid} cwd={cwd} paths={paths} resolvePathStat={resolvePathStat} />;
+  return <LinkedReplyFiles {...props} mid={mid} cwd={cwd} paths={paths} />;
+}
+
+function LinkedReplyFiles({
+  mid,
+  cwd,
+  paths,
+  ...props
+}: Omit<ReplyFilesProps, "files" | "text" | "resolvePathStat"> & { paths: string[] }) {
   const { stat, key } = usePathLinks(mid, cwd, paths);
   const files = useMemo<AttachedFile[]>(
-    () =>
-      paths.flatMap((p) => {
-        const s = stat(p);
-        return s?.kind === "file" ? [{ kind: mediaKindOf(p), path: p, name: p.split("/").pop() || p, size: s.size }] : [];
-      }),
+    () => filesAtPaths(paths, stat),
     [paths, key], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  return <ReplyFilesView {...props} files={files} mid={mid} cwd={cwd} />;
+}
+
+function ResolvedReplyFiles({
+  mid,
+  cwd,
+  paths,
+  resolvePathStat,
+  ...props
+}: Omit<ReplyFilesProps, "files" | "text" | "resolvePathStat"> & {
+  paths: string[];
+  resolvePathStat: NonNullable<ReplyFilesProps["resolvePathStat"]>;
+}) {
+  return <ReplyFilesView {...props} files={filesAtPaths(paths, resolvePathStat)} mid={mid} cwd={cwd} controlled />;
+}
+
+function filesAtPaths(paths: string[], stat: (path: string) => PathStat | undefined): AttachedFile[] {
+  return paths.flatMap((path) => {
+    const s = stat(path);
+    return s?.kind === "file" ? [{ kind: mediaKindOf(path), path, name: path.split("/").pop() || path, size: s.size }] : [];
+  });
+}
+
+function ReplyFilesView({
+  files,
+  mid,
+  cwd,
+  controlled = false,
+  onOpenFile,
+  resolveThumbURL,
+  resolveDownloadURL,
+}: Pick<ReplyFilesProps, "mid" | "cwd" | "onOpenFile" | "resolveThumbURL" | "resolveDownloadURL"> & {
+  files: AttachedFile[];
+  controlled?: boolean;
+}) {
   const docs = files.filter((f) => isDocument(f.path)).slice(0, MAX_DOCUMENT_CARDS);
   const rest = files.filter((f) => !isDocument(f.path));
   return files.length ? (
     <div className="mt-2 flex flex-col gap-1.5">
-      {rest.length > 0 && <FileCards files={rest} mid={mid} align="start" />}
-      {docs.length > 0 && <DocumentCards files={docs} mid={mid} cwd={cwd} />}
+      {rest.length > 0 && (
+        <FileCards
+          files={rest}
+          mid={mid}
+          align="start"
+          cwd={controlled ? cwd : undefined}
+          onOpenFile={onOpenFile}
+          resolveDownloadURL={resolveDownloadURL}
+        />
+      )}
+      {docs.length > 0 && (
+        <DocumentCards files={docs} mid={mid} cwd={cwd} onOpenFile={onOpenFile} resolveThumbURL={resolveThumbURL} />
+      )}
     </div>
   ) : null;
 }
 
 /** The documents an answer names, as cards with their first page, in a row that scrolls sideways (iOS DocumentCards). */
-export function DocumentCards({ files, mid, cwd }: { files: AttachedFile[]; mid: string; cwd?: string }) {
+export interface DocumentCardsProps {
+  files: AttachedFile[];
+  mid: string;
+  cwd?: string;
+  /** A controlled panel opens the file instead of the default file panel. */
+  onOpenFile?: (path: string) => void;
+  /** A controlled panel resolves thumbnails instead of the default file/thumb route. */
+  resolveThumbURL?: (path: string, size: number) => string;
+}
+
+export function DocumentCards({ files, mid, cwd, onOpenFile, resolveThumbURL }: DocumentCardsProps) {
   const row = useRef<HTMLDivElement>(null);
   const { edges, measure } = useEdgeFade(row, [files.length]);
   const mask = edgeMask(edges);
@@ -110,20 +223,32 @@ export function DocumentCards({ files, mid, cwd }: { files: AttachedFile[]; mid:
       style={{ maskImage: mask, WebkitMaskImage: mask }}
     >
       {files.map((f) => (
-        <DocumentCard key={f.path} f={f} mid={mid} cwd={cwd} />
+        <DocumentCard key={f.path} f={f} mid={mid} cwd={cwd} onOpenFile={onOpenFile} resolveThumbURL={resolveThumbURL} />
       ))}
     </div>
   );
 }
 
-function DocumentCard({ f, mid, cwd }: { f: AttachedFile; mid: string; cwd?: string }) {
+function DocumentCard({
+  f,
+  mid,
+  cwd,
+  onOpenFile,
+  resolveThumbURL,
+}: {
+  f: AttachedFile;
+  mid: string;
+  cwd?: string;
+  onOpenFile?: DocumentCardsProps["onOpenFile"];
+  resolveThumbURL?: DocumentCardsProps["resolveThumbURL"];
+}) {
   // no thumbnail (an old hub, a machine that cannot draw it, the file gone) or a dark page (Quick Look in dark mode):
   // the file's glyph, as iOS falls back to its symbol
   const [failed, setFailed] = useState(false);
   return (
     <button
       type="button"
-      onClick={() => openPanel({ kind: "file", mid, path: f.path })}
+      onClick={() => onOpenFile ? onOpenFile(f.path) : openPanel({ kind: "file", mid, path: f.path })}
       title={f.path}
       className="flex h-16 w-60 max-w-full shrink-0 items-center gap-3 rounded-[14px] bg-inset px-2 text-left shadow-hairline outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent"
       style={{ animation: "fade-in 220ms ease-out both" }}
@@ -134,7 +259,7 @@ function DocumentCard({ f, mid, cwd }: { f: AttachedFile; mid: string; cwd?: str
           <FileGlyph name={f.name} size={18} />
         ) : (
           <img
-            src={fileThumbURL(mid, f.path, cwd, 128)}
+            src={resolveThumbURL ? resolveThumbURL(f.path, 128) : fileThumbURL(mid, f.path, cwd, 128)}
             alt=""
             loading="lazy"
             decoding="async"
