@@ -38,7 +38,7 @@ func fit(v *View, slot UISlot, uiVersion int, unsupported []string, native bool,
 	if v == nil {
 		return nil, errors.New("no view")
 	}
-	if slot.Size == SizeFull {
+	if FullPage(slot.Name) {
 		// A full page may navigate to an existing Persona session or to-do; its open is kept only for those targets.
 		dropped = wire.StripAssistantFieldsForPage(v)
 	} else {

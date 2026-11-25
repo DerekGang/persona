@@ -301,8 +301,8 @@ func assistantOnlyAction(a *Action, keepPageNavigation bool) bool {
 
 func StripAssistantFields(v *View) []string { return stripAssistantFields(v, false) }
 
-// StripAssistantFieldsForPage is StripAssistantFields for a full extension page (extension_page, nav_page and the
-// other full slots): it keeps an action whose only assistant-only field is an open of a persona session or to-do.
+// StripAssistantFieldsForPage is StripAssistantFields for a full extension page (extension_page/plugin_page and
+// nav_page): it keeps an action whose only assistant-only field is an open of a persona session or to-do.
 func StripAssistantFieldsForPage(v *View) []string { return stripAssistantFields(v, true) }
 
 func stripAssistantFields(v *View, keepPageNavigation bool) []string {
