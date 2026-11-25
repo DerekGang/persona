@@ -270,7 +270,11 @@ private fun ScenePin(
         ?: if (tone == Tone.Neutral) palette.ink2 else palette.tone(tone).text
     val state = pin.state?.takeIf(String::isNotBlank)
     val readout = listOfNotNull(pin.label, state).joinToString(", ")
-    val action = pin.action?.toViewAction()?.takeIf { it.id.isNotBlank() || it.push != null || it.open != null || it.pop }
+    // A confirm-only action is valid too: confirmation precedes the named action, and a blank id with nonblank
+    // confirm reaches the same confirmation dialog as ordinary row actions (review P2).
+    val action = pin.action?.toViewAction()?.takeIf {
+        it.id.isNotBlank() || !it.confirm.isNullOrBlank() || it.push != null || it.open != null || it.pop
+    }
     val click = if (canAct && action != null) Modifier.clickable(role = Role.Button) { onPin(pin, action) } else Modifier
     Box(Modifier.sizeIn(minWidth = Tokens.MinTouch.android, minHeight = Tokens.MinTouch.android)
         .semantics { traversalIndex = order.toFloat(); contentDescription = readout }
