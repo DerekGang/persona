@@ -34,6 +34,9 @@ type fakeAppServer struct {
 	ended   chan struct{}
 	results map[string]any    // method → result
 	errors  map[string]string // method → error message, instead of a result
+	// beforeReply, when set, runs after a request is recorded and before its successful result is written: a test
+	// can push a notification that the app-server sent before the response.
+	beforeReply func(method string)
 }
 
 func (f *fakeAppServer) serve(r io.Reader) {
@@ -60,6 +63,7 @@ func (f *fakeAppServer) serve(r io.Reader) {
 		f.got = append(f.got, m)
 		res, ok := f.results[m.Method]
 		fail, failing := f.errors[m.Method]
+		beforeReply := f.beforeReply
 		f.mu.Unlock()
 		if len(m.ID) > 0 && failing {
 			f.push(map[string]any{"id": m.ID, "error": map[string]any{"code": -32000, "message": fail}})
@@ -68,6 +72,9 @@ func (f *fakeAppServer) serve(r io.Reader) {
 		if len(m.ID) > 0 {
 			if !ok {
 				res = map[string]any{}
+			}
+			if beforeReply != nil {
+				beforeReply(m.Method)
 			}
 			f.push(map[string]any{"id": m.ID, "result": res})
 		}
@@ -944,5 +951,79 @@ func TestAssistantCodexTurnError(t *testing.T) {
 	end("t5", "completed", nil)
 	if s := session(); s.TurnError != "" {
 		t.Fatalf("completed turn: %q", s.TurnError)
+	}
+}
+
+// turn/completed can reach the node before the turn/start response that carries its id; a duplicate turn/started
+// then must not revive the completed turn, or the next message steers it instead of starting a new turn.
+func TestCodexLateTurnNotificationsDoNotReviveCompletedTurn(t *testing.T) {
+	n := codexTestNode(t)
+	n.dir = t.TempDir()
+	withFakeHub(t, n)
+	cwd := t.TempDir()
+	p, c, f := newFakeCodex(t, n, cwd)
+	f.results["thread/start"] = map[string]any{"thread": map[string]any{"id": testThread}}
+	f.results["turn/start"] = map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}}
+	ctx := context.Background()
+	if err := c.start(ctx, "", cwd, false); err != nil {
+		t.Fatal(err)
+	}
+
+	completedBeforeReply := false
+	f.mu.Lock()
+	f.beforeReply = func(method string) {
+		if method != "turn/start" || completedBeforeReply {
+			return
+		}
+		completedBeforeReply = true
+		_ = f.push(map[string]any{"method": "turn/completed", "params": map[string]any{
+			"threadId": testThread, "turn": map[string]any{"id": "turn-1", "status": "completed"},
+		}})
+	}
+	f.mu.Unlock()
+
+	if err := c.deliver(ctx, "", "first", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.turn(); got != "" {
+		t.Fatalf("the start response revived completed turn %q", got)
+	}
+
+	// The late duplicate is ignored: the turn stays over and the process stays idle.
+	f.push(map[string]any{"method": "turn/started", "params": map[string]any{
+		"threadId": testThread, "turn": map[string]any{"id": "turn-1", "status": "inProgress"},
+	}})
+	f.push(map[string]any{"method": "thread/settings/updated", "params": map[string]any{
+		"threadId": testThread, "threadSettings": map[string]any{"model": "after-late-started"},
+	}})
+	waitFor(t, "the late notifications read", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.speedModel == "after-late-started"
+	})
+	if got := c.turn(); got != "" {
+		t.Fatalf("late turn/started revived completed turn %q", got)
+	}
+	p.mu.Lock()
+	busy := p.busy
+	p.mu.Unlock()
+	if busy {
+		t.Fatal("late turn/started marked the process busy after the turn completed")
+	}
+
+	f.mu.Lock()
+	f.results["turn/start"] = map[string]any{"turn": map[string]any{"id": "turn-2", "status": "inProgress"}}
+	f.mu.Unlock()
+	if err := c.deliver(ctx, "", "second", nil); err != nil {
+		t.Fatal(err)
+	}
+	if starts := f.sent("turn/start"); len(starts) != 2 {
+		t.Fatalf("the next message did not start a new turn: turn/start %d", len(starts))
+	}
+	if steers := f.sent("turn/steer"); len(steers) != 0 {
+		t.Fatalf("the next message steered the completed turn: turn/steer %d", len(steers))
+	}
+	if got := c.turn(); got != "turn-2" {
+		t.Fatalf("the next turn's id %q", got)
 	}
 }
