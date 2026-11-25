@@ -271,3 +271,26 @@ func TestClaudeDesktopComputerAttentionDoesNotSuggestTmux(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudePluginPassedOverAttentionExplainsEngineAlternative(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		lang i18n.Lang
+		want []string
+	}{
+		{"en", i18n.En, []string{"managed settings", "computer", "terminal engine"}},
+		{"zh-Hans", i18n.ZhHans, []string{"管理设置", "电脑", "终端引擎"}},
+		{"ja", i18n.Ja, []string{"管理設定", "コンピューター", "ターミナルエンジン"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := proto.Session{AttentionReason: proto.AttentionClaudePluginPassedOver}
+			localizeSession(c.lang, &s)
+			got := strings.ToLower(s.AttentionReason)
+			for _, want := range c.want {
+				if !strings.Contains(got, strings.ToLower(want)) {
+					t.Errorf("plugin pass-over attention %q does not mention %q", s.AttentionReason, want)
+				}
+			}
+		})
+	}
+}

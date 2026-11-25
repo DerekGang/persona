@@ -14,13 +14,17 @@ import {
   applyStepOverride,
   buildPermissionPayload,
   clearAgentPreTools,
+  createClassicHookObservation,
   createPreToolCache,
+  finishClassicTurn,
   hasPermissionDecision,
   homeDir,
   isToolCompleted,
   markToolCompleted,
   mergeOverride,
   nextBackoff,
+  noteClassicPreToolUse,
+  noteTurnStepToolUses,
   readPermissionAnswer,
   readPoll,
   recordPreTool,
@@ -71,6 +75,7 @@ export const register: Register = on => {
   let activeTurn: ActiveTurn | undefined
   let override: SessionOverride | undefined
   let permissionAuth: PermissionAuth | undefined
+  let classicHooks = createClassicHookObservation()
   const preToolCache = createPreToolCache()
   const activePerms = new Map<string, ActivePerm>()
   let permSeq = 0
@@ -87,6 +92,10 @@ export const register: Register = on => {
     if (e.agentId === undefined && activeTurn?.turnId === e.turnId) {
       activeTurn = undefined
     }
+    if (e.agentId === undefined) {
+      classicHooks = finishClassicTurn(classicHooks)
+      if (classicHooks.passedOver) permissionAuth = undefined
+    }
     try {
       const agentId = e.agentId ?? ''
       clearAgentPreTools(preToolCache, agentId)
@@ -102,16 +111,26 @@ export const register: Register = on => {
       const session = await $.session.id().catch(() => '')
       activeTurn = { session, turnId: e.turnId }
     }
-    if (e.agentId !== undefined || override === undefined) return yield* next(e)
-    const session = await $.session.id().catch(() => '')
-    const sessionModel = override.model !== undefined ? await $.session.model().catch(() => undefined) : undefined
-    const applied = applyStepOverride(e, override, session, sessionModel)
-    override = applied.nextOverride
-    return yield* next(applied.step)
+    let step = e
+    if (e.agentId === undefined && override !== undefined) {
+      const session = await $.session.id().catch(() => '')
+      const sessionModel = override.model !== undefined ? await $.session.model().catch(() => undefined) : undefined
+      const applied = applyStepOverride(e, override, session, sessionModel)
+      override = applied.nextOverride
+      step = applied.step
+    }
+    const output = yield* next(step)
+    try {
+      classicHooks = noteTurnStepToolUses(classicHooks, e.agentId, output)
+    } catch {
+      // Observation never changes the step.
+    }
+    return output
   })
 
   on('classic.PreToolUse', (_$, e, next) => {
     try {
+      classicHooks = noteClassicPreToolUse(classicHooks, e)
       recordPreTool(preToolCache, e)
       return next(e)
     } catch {
@@ -339,6 +358,7 @@ export const register: Register = on => {
       turnId => {
         if (activeTurn?.turnId === turnId) activeTurn = undefined
       },
+      () => classicHooks.passedOver,
       async (session, update) => {
         const sessionModel = update.model !== undefined ? await $.session.model().catch(() => undefined) : undefined
         override = mergeOverride(override, session, update, sessionModel)
@@ -445,6 +465,7 @@ async function run(
   current: () => boolean,
   getActiveTurn: () => ActiveTurn | undefined,
   clearActiveTurn: (turnId: string) => void,
+  classicPassedOver: () => boolean,
   onSettings: (session: string, update: SettingsUpdate) => Promise<void>,
   setPermissionAuth: (auth: PermissionAuth | undefined) => void,
 ): Promise<void> {
@@ -467,6 +488,7 @@ async function run(
         plugin_version: pluginVersion,
         engine_version: engineVersion,
         capabilities: CAPABILITIES,
+        ...(classicPassedOver() ? { classic_passed_over: true } : {}),
         wait_ms: POLL_WAIT_MS,
       }))
       answer = readPoll(res.status, res.text)
