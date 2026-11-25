@@ -72,7 +72,7 @@ beforeEach(async () => {
       return {
         todos: [
           done("done-recent", "Recent done", "2026-11-24T11:00:00Z"),
-          done("done-older", "Older done", "2026-10-01T11:00:00Z"),
+            { ...done("done-older", "Older done", "2026-10-01T11:00:00Z"), due_date: "2026-10-01" },
         ],
         has_more: false,
       };
@@ -105,6 +105,8 @@ describe("older closed history", () => {
     const section = host.querySelector<HTMLElement>('[data-testid=todo-section][data-section="done"]')!;
     const fold = section.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
     expect(fold.textContent).toContain(t("todos.section_done"));
+    expect(host.querySelector('[data-testid=todo-section][data-section="cancelled"]'), "older closed history keeps the Cancelled entry reachable")
+      .not.toBeNull();
     expect(section.dataset.todos, "the server's whole-list count is not a visible row count").toBe("1");
     expect(getState().todoBoard).not.toBeNull();
     expect(host.textContent).not.toContain("Older done");
@@ -153,6 +155,37 @@ describe("older closed history", () => {
     expect(host.textContent).toContain("Older done");
   });
 
+  it("offers a Cancelled entry when only older cancelled history exists", async () => {
+    api.mockImplementation(async (path, init) => {
+      if (path === "/todos") {
+        return { todos: [], closed_cursors: { assistant: { next_cursor: "closed-cancelled", has_more: true } } };
+      }
+      if (path === "/todos?limit=50&cursor=closed-cancelled") {
+        expect(new Headers(init?.headers).get("X-Persona-Manager")).toBe("assistant");
+        return {
+          todos: [{ ...done("cancelled-older", "Older cancelled", "2026-10-01T11:00:00Z"), done_by: "cancelled", cancelled_at: "2026-10-01T11:00:00Z" }],
+          has_more: false,
+        };
+      }
+      return {};
+    });
+    reset();
+    localStorage.setItem("persona.todos.grouping", "status");
+    await refreshTodos();
+    Object.assign(getState(), {
+      assistant: { machine_id: "m1", main: "main", conversations: [], todos_v2: true },
+      features: ["todo_view"],
+    });
+
+    await act(async () => root.render(<TodosView />));
+    await flush();
+    const section = host.querySelector<HTMLElement>('[data-testid=todo-section][data-section="cancelled"]')!;
+    expect(section).toBeTruthy();
+    await act(async () => section.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
+    await flush();
+    expect(host.textContent).toContain("Older cancelled");
+  });
+
   it("loads the cursor when an already-open Done section reaches the end", async () => {
     localStorage.setItem("fold:todos-section:done", "0");
     class Visible {
@@ -171,5 +204,14 @@ describe("older closed history", () => {
 
     expect(api).toHaveBeenCalledWith("/todos?limit=50&cursor=closed-1", expect.anything());
     expect(host.textContent).toContain("Older done");
+  });
+
+  it("loads the remaining closed pages when the calendar asks to show done rows", async () => {
+    localStorage.setItem("persona.todos.calendar.showDone", "1");
+    await act(async () => root.render(<TodosView view="calendar" mode="day" date="2026-10-01" />));
+    await flush();
+    expect(api).toHaveBeenCalledWith("/todos?limit=50&cursor=closed-1", expect.anything());
+    expect(getState().todos.some((todo) => todo.id === "done-older")).toBe(true);
+    expect(host.querySelector('[data-testid="todo-calendar-entry"]')?.textContent).toContain("Older done");
   });
 });

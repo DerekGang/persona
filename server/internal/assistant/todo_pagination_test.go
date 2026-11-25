@@ -183,6 +183,40 @@ func TestTodosPaginationKeepsCompleteAnswerWithoutParameters(t *testing.T) {
 	}
 }
 
+func TestTodosCompleteAnswerKeepsMoreThanFiftyClosedRowsAndTheCompleteBoard(t *testing.T) {
+	s := manyTodos(57)
+	setTodosV2ForTest(t, s, true, false)
+	w := serve(s, "GET", "/api/v1/todos", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("complete answer: %d %s", w.Code, w.Body)
+	}
+	var list todosList
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Todos) != 57 {
+		t.Fatalf("the complete answer has %d rows, want all 57 closed rows", len(list.Todos))
+	}
+	if list.Board == nil || list.Board.Counts.Done != 57 {
+		t.Fatalf("the complete board counts %+v, want 57 done", list.Board)
+	}
+	if got := list.Counts.Sections["done"]; got != 57 {
+		t.Fatalf("the complete counts report %d done rows, want 57", got)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"closed_next_cursor", "closed_has_more", "closed_cursors"} {
+		if _, ok := fields[key]; ok {
+			t.Errorf("the complete answer unexpectedly carries %q", key)
+		}
+	}
+	if w.Header().Get(assistantwire.TodoRevisionHeader) == "" {
+		t.Error("the complete answer lost its revision validator")
+	}
+}
+
 func TestTodosClosedLimitBoundsClosedButKeepsOpenAndWholeListNumbers(t *testing.T) {
 	const closedLimit = 50
 	s := manyTodos(closedLimit + 3)
@@ -258,37 +292,38 @@ func TestTodosClosedLimitBoundsClosedButKeepsOpenAndWholeListNumbers(t *testing.
 	if closedNext.Board == nil {
 		t.Fatal("the bounded list lost the server board")
 	}
-	if got := closedNext.Board.Counts.Done; got != closedLimit {
-		t.Errorf("the bounded board counts %d done rows, want %d", got, closedLimit)
+	if got := closedNext.Board.Counts.Done; got != closedLimit+3 {
+		t.Errorf("the bounded board counts %d done rows, want the complete list's %d", got, closedLimit+3)
 	}
-	checkBoardRow := func(id, where string) {
-		if _, ok := byID[id]; !ok {
-			t.Errorf("the bounded board names %s outside the bounded rows in %s", id, where)
-		}
-	}
+	boardIDs := map[string]bool{}
 	for _, group := range closedNext.Board.StatusGroups {
 		for _, entry := range group.Entries {
-			checkBoardRow(entry.TodoID, "status entry")
+			boardIDs[entry.TodoID] = true
 			for _, id := range entry.FoldedChildIDs {
-				checkBoardRow(id, "folded child")
+				boardIDs[id] = true
 			}
 			for _, id := range entry.SurfacedChildIDs {
-				checkBoardRow(id, "surfaced child")
+				boardIDs[id] = true
 			}
 		}
 	}
 	for _, group := range closedNext.Board.DirectionGroups {
 		for _, id := range group.TodoIDs {
-			checkBoardRow(id, "direction group")
+			boardIDs[id] = true
 		}
 	}
 	for _, node := range closedNext.Board.SidebarTree {
-		checkBoardRow(node.TodoID, "sidebar node")
+		boardIDs[node.TodoID] = true
 		for _, id := range node.ChildIDs {
-			checkBoardRow(id, "sidebar child")
+			boardIDs[id] = true
 		}
 		for _, id := range node.SurfacedChildIDs {
-			checkBoardRow(id, "sidebar surfaced child")
+			boardIDs[id] = true
+		}
+	}
+	for _, id := range []string{"todo_bench000000", "todo_bench000001", "todo_bench000002"} {
+		if !boardIDs[id] {
+			t.Errorf("the complete board does not name the closed row %s omitted from the bounded list", id)
 		}
 	}
 	for _, id := range []string{"todo_open_old", "todo_failed_old", "todo_shared_a", "todo_shared_b"} {

@@ -1059,18 +1059,20 @@ func (s *Service) todoRoutes() {
 		} else if !paged {
 			s.tagTodoRevision(w, writes, p)
 		}
-		var closedNext string
-		var closedHasMore bool
-		if boundedClosed {
-			list, closedNext, closedHasMore = boundedTodoList(list, closedLimit)
-		}
 		var sharedBlockers []projection.SharedBlocker
 		var board *todoBoardProjection
 		if !isExtension {
 			sharedBlockers = p.sharedBlockers()
 			if !paged && s.settings(r.Context()).todosV2On() {
+				// The board is the same complete projection as Counts. The closed_limit option bounds the rows a list
+				// client has to parse; it does not silently create a second, smaller set of board totals.
 				board = buildTodoBoardProjection(list, s.todoBoardDirectionLabels(r.Context()))
 			}
+		}
+		var closedNext string
+		var closedHasMore bool
+		if boundedClosed {
+			list, closedNext, closedHasMore = boundedTodoList(list, closedLimit)
 		}
 		if paged {
 			writeTodoPage(w, list, p, sharedBlockers, limit, after)

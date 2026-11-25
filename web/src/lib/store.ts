@@ -1729,6 +1729,27 @@ function mergeTodoRows(base: Todo[], older: Todo[]): Todo[] {
   return out;
 }
 
+/** The closed rows still carried by the bounded list are authoritative; an older row survives only while no fresher
+ *  row with its id says it was reopened or failed to start. A missing older row is retained: a bounded answer cannot
+ *  distinguish "older than the window" from "deleted", while an explicit drop or reopen always names the id. */
+function retainOlderClosed(list: Todo[], older: Todo[]): Todo[] {
+  const fresh = new Set(list.map((todo) => todo.id));
+  return older.filter((todo) => !fresh.has(todo.id));
+}
+
+/** Keep a cursor that has already walked history instead of resetting it to a newer page's boundary. */
+function mergeClosedCursors(
+  previous: Record<string, TodoClosedCursor>,
+  next: Record<string, TodoClosedCursor>,
+): Record<string, TodoClosedCursor> {
+  const out = { ...next };
+  for (const [manager, cursor] of Object.entries(previous)) {
+    // A manager already in the state has advanced or exhausted its cursor; do not put its first page back.
+    out[manager] = cursor;
+  }
+  return out;
+}
+
 async function readTodos(): Promise<TodosListAnswer> {
   const owner = credentialOwner();
   const kept = keptTodos?.owner === owner ? keptTodos : null;
@@ -1826,17 +1847,18 @@ function applyTodos(todos: PromiseSettledResult<TodosListAnswer>, fresh: () => b
     const list = todos.value.todos ?? [];
     const sharedBlockers = Array.isArray(todos.value.shared_blockers) ? todos.value.shared_blockers : [];
     const todoBoard = validTodoBoard(todos.value.board);
+    const older = retainOlderClosed(list, olderClosedTodos);
     closedEpoch++;
     defaultTodos = list;
-    olderClosedTodos = [];
+    olderClosedTodos = older;
     for (const t of list) {
       if (t.manager) noteItemManager(`/todos/${encodeURIComponent(t.id)}`, t.manager);
     }
     set({
-      todos: list,
+      todos: mergeTodoRows(list, older),
       sharedBlockers,
-      todoBoard,
-      closedCursors: closedCursorsOf(todos.value),
+      todoBoard: older.length ? null : todoBoard,
+      closedCursors: mergeClosedCursors(state.closedCursors, closedCursorsOf(todos.value)),
       closedLoading: false,
       closedError: null,
       todosSupported: true,
@@ -1872,7 +1894,9 @@ export function putTodo(todo: Todo) {
   todosAsked.forget();
   if (todo.manager) noteItemManager(`/todos/${encodeURIComponent(todo.id)}`, todo.manager);
   defaultTodos = defaultTodos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t));
-  olderClosedTodos = olderClosedTodos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t));
+  olderClosedTodos = todo.done_at && !(todo.start_error && !todo.cancelled_at)
+    ? olderClosedTodos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t))
+    : olderClosedTodos.filter((t) => t.id !== todo.id);
   set({ todos: state.todos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t)) });
 }
 
@@ -1901,15 +1925,14 @@ export async function loadOlderClosed(manager?: string) {
   const owner = credentialOwner();
   const cursors = { ...state.closedCursors };
   const added: Todo[] = [];
-  let failure: unknown;
+  const failures: unknown[] = [];
   set({ closedLoading: true, closedError: null });
-  for (const [manager, start] of starts) {
+  for (const [managerID, start] of starts) {
     let cursor = start.next_cursor;
-    let failedHere = false;
     for (let page = 0; cursor && page < 3; page++) {
       try {
         const query = new URLSearchParams({ limit: "50", cursor });
-        const answer = await api<TodoPageAnswer>(`/todos?${query}`, { headers: stampedHeaders(manager) });
+        const answer = await api<TodoPageAnswer>(`/todos?${query}`, { headers: stampedHeaders(managerID) });
         if (epoch !== closedEpoch || owner !== credentialOwner()) return;
         const known = new Set([...defaultTodos, ...olderClosedTodos, ...added].map((todo) => todo.id));
         let found = 0;
@@ -1923,13 +1946,13 @@ export async function loadOlderClosed(manager?: string) {
         cursor = answer.has_more && answer.next_cursor ? answer.next_cursor : "";
         if (found) break;
       } catch (reason) {
-        failure = reason;
-        failedHere = true;
+        failures.push(reason);
         break;
       }
     }
-    if (!failedHere) cursors[manager] = { next_cursor: cursor, has_more: Boolean(cursor) };
-    if (failure) break;
+    // A manager that failed after one or more successful pages keeps the cursor those pages reached; the next manager is
+    // still attempted, and the caller can retry only this one later.
+    cursors[managerID] = { next_cursor: cursor, has_more: Boolean(cursor) };
   }
   if (epoch !== closedEpoch || owner !== credentialOwner()) return;
   olderClosedTodos = [...olderClosedTodos, ...added];
@@ -1940,8 +1963,22 @@ export async function loadOlderClosed(manager?: string) {
     todoBoard: added.length ? null : state.todoBoard,
     closedCursors: cursors,
     closedLoading: false,
-    closedError: failure ? errorText(failure) : null,
+    closedError: failures.length ? failures.map((failure) => errorText(failure)).join(" · ") : null,
   });
+}
+
+/** Loads every remaining closed page in the current manager scope. Used only when the calendar asks to show closed rows:
+ *  the list remains bounded until that explicit view needs the complete dated history. */
+export async function loadAllOlderClosed(manager?: string) {
+  for (let page = 0; page < 1000; page++) {
+    const before = state.closedCursors;
+    const hasMore = Object.entries(before).some(([id, cursor]) =>
+      (!manager || id === manager) && cursor.has_more && cursor.next_cursor);
+    if (!hasMore) return;
+    const signature = JSON.stringify(before);
+    await loadOlderClosed(manager);
+    if (state.closedError || JSON.stringify(state.closedCursors) === signature) return;
+  }
 }
 
 // A push that says the to-dos changed ({"type":"todos"}, a task's feed item) comes in bursts. Settle 200 ms, then ask

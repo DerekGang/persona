@@ -29,7 +29,7 @@ import { useScrollMemory } from "../lib/scroll-memory";
 import { useAgentSessions, useFullAgentSessions } from "../lib/sessions";
 import { useScoped } from "../lib/current-assistant";
 import { lazyPage } from "../lib/lazy-page";
-import { dropTodo, loadOlderClosed, refresh, refreshTodos, useStore } from "../lib/store";
+import { dropTodo, loadAllOlderClosed, loadOlderClosed, refresh, refreshTodos, useStore } from "../lib/store";
 import {
   addTodoDecision,
   createTodo,
@@ -434,6 +434,11 @@ function TodoListView({
     error: closedError,
     onLoad: () => { void loadOlderClosed(repositoryManager); },
   }), [hasOlderClosed, closedLoading, closedError, repositoryManager]);
+  // The calendar's Show done needs the otherwise-bounded dated history. This is an explicit, calendar-only read;
+  // the list and board remain bounded until it is asked for.
+  useEffect(() => {
+    if (calendarOn && calendarDone && hasOlderClosed) void loadAllOlderClosed(repositoryManager);
+  }, [calendarOn, calendarDone, hasOlderClosed, repositoryManager]);
   const [selectedBlockerKey, setSelectedBlockerKey] = useState<string | null>(null);
   const activeBlocker = useMemo(
     () => (todosV2 ? findSelectedBlocker(selectedBlockerKey, sharedBlockers) : undefined),
@@ -1462,7 +1467,7 @@ function TodoListView({
               <div className="flex flex-col gap-1" data-testid="todos-sections" data-todo-source={serverBoard ? "board" : fromView ? "view" : undefined}>
                 {hiddenWaitingCount > 0 && <HiddenWaitingLine count={hiddenWaitingCount} filter={listFilter} onShowAll={() => chooseFilter("all")} />}
                 {statusSectionOrder.map((sec) =>
-                  displayTriaged.sections[sec].length === 0 && !(sec === "done" && hasOlderClosed) ? null : (
+                  displayTriaged.sections[sec].length === 0 && !((sec === "done" || sec === "cancelled") && hasOlderClosed) ? null : (
                     <TodoTriageSection
                       key={sec}
                       section={sec}
@@ -1586,7 +1591,7 @@ function TodoListView({
                   </div>
                 )}
                 {/* Cancelled Fold: its own outcome and reason, never inside Completed (#5732) */}
-                {filteredCancelled.length > 0 && (
+                {(filteredCancelled.length > 0 || hasOlderClosed) && (
                   <div className="mt-2 border-t border-line/60 pt-2" data-testid="todos-cancelled-fold">
                     <button
                       type="button"
