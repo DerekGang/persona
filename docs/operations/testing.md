@@ -125,7 +125,10 @@ The parts are balanced by measured task time, and each lane runs its parts in on
 share runs once per lane rather than once per part (#3056). Module declarations are dynamically partitioned; unknown module prefixes
 use a fallback part, while unsupported declarations fail rather than skip coverage. Every module's complete test selector retains all
 variants. Gradle workers remain bounded; build and public Robolectric dependency caches do not contain private config. Per-lane Gradle
-profiles and test/lint reports are uploaded for diagnosis. Local entry points without lane options still run complete verification.
+profiles and test/lint reports are uploaded for diagnosis. An independent exact-source result job then verifies run-bound receipts from
+both lanes and publishes one aggregate artifact even when a lane fails or disappears; missing receipts are recorded as unavailable rather
+than as passes or ordinary test failures, and release signing consumes only a verified aggregate. Local entry points without lane
+options still run complete verification.
 The chat module's single-JVM tests use a 1 GB heap because their Robolectric native-graphics classes accumulate resource/theme
 tables in the shared test process. A two-worker lane can run at most two test JVMs, a 2 GB combined test-heap cap when both use that
 setting; the 4 GB Gradle daemon and non-heap allocations are separate.
