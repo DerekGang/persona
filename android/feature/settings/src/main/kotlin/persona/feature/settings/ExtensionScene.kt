@@ -111,6 +111,9 @@ internal fun ExtensionScene(
             .map { SceneLamp(it.position, it.item.light?.warmth == ExtensionSceneWarmth.COOL) }.toList()
     }
     val onPin: (ExtensionScenePin, ExtensionViewAction) -> Unit = { pin, action ->
+        if (fullScreen && (!action.confirm.isNullOrBlank() || action.push != null || action.open != null || action.pop)) {
+            fullScreen = false
+        }
         handle.press(ExtensionViewItem(type = "row", title = pin.label, key = "${item.key.orEmpty()}/${pin.id}"), action)
     }
     val theme = PersonaTheme
@@ -132,11 +135,17 @@ internal fun ExtensionScene(
         }
     }
     if (fullScreen) JFullScreen(onDismiss = { fullScreen = false }) {
+        var previewCamera by rememberSaveable(item.key) { mutableStateOf<ArrayList<Double>?>(null) }
+        val fullCamera = if (compact) previewCamera?.let { SceneCamera(it[0], it[1], it[2]) } ?: initial else camera
+        val adjustFull: (SceneCamera) -> Unit = if (compact) {
+            { previewCamera = arrayListOf(it.yaw, it.pitch, it.zoom) }
+        } else adjust
+        val resetFull = { if (compact) previewCamera = null else savedCamera = null }
         Column(Modifier.fillMaxSize().testTag("scene-full-screen")) {
             JTopBar(title, onBack = { fullScreen = false })
-            SceneViewport(title, mesh, camera, labels, pins, lamps, true, !state.busy, adjust, onPin,
+            SceneViewport(title, mesh, fullCamera, labels, pins, lamps, true, !state.busy, adjustFull, onPin,
                 Modifier.weight(1f).fillMaxWidth())
-            SceneControls(camera, initial, adjust, { savedCamera = null }, null)
+            SceneControls(fullCamera, initial, adjustFull, resetFull, null)
         }
     }
 }

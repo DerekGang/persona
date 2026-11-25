@@ -39,6 +39,7 @@ import persona.core.contracts.JsonCodec
 import persona.core.contracts.api.ExtensionView
 import persona.core.contracts.api.ExtensionViewAction
 import persona.core.contracts.api.ExtensionViewItem
+import persona.core.contracts.generated.ExtensionAction
 import persona.core.designsystem.AppStyle
 import persona.core.designsystem.PersonaTheme
 import java.io.File
@@ -49,10 +50,24 @@ import java.io.File
 class ExtensionSceneShotsTest {
     @get:Rule val rule = createComposeRule()
 
-    private val scene by lazy {
+    private val view by lazy {
         val file = File(System.getProperty("persona.repo.root"), "schema/extension/examples/View.v11-scene-flat.json")
         JsonCodec.decodeFromString(ExtensionView.serializer(), file.readText())
-            .sections.flatMap { it.items }.single { it.type == "scene" }
+    }
+    private val scene get() = view.sections.flatMap { it.items }.single { it.type == "scene" }
+
+    @Test fun sceneIsDrawableInExtensionPagesAndCards() {
+        var compact by mutableStateOf(false)
+        val state = ExtensionViewState(view = view)
+        val handle = ExtensionViewHandle({ _, _ -> }, { _, _ -> }, {}, {})
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true) {
+                if (compact) ExtensionCardContent(state, handle) else ExtensionViewColumn(state, handle)
+            }
+        }
+        rule.onNodeWithTag("extension-scene").assertExists()
+        rule.runOnIdle { compact = true }
+        rule.onNode(hasTestTag("extension-scene") and hasClickAction()).assertExists()
     }
 
     @Test fun compactAndPageScenesUseEveryStyleAndAppearance() {
@@ -127,6 +142,32 @@ class ExtensionSceneShotsTest {
         rule.onNodeWithTag("scene-full-screen").assertExists()
         rule.onNode(hasTestTag("scene-pin-light.living") and hasClickAction() and
             SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Living room light, On"))).assertExists()
+    }
+
+    @Test fun compactCoverDismissesBeforeAConfirmationAndReopensAtTheInitialCamera() {
+        val pins = scene.pins.orEmpty().map {
+            if (it.id == "light.living") it.copy(action = ExtensionAction(id = "toggle", confirm = "Turn the light on?")) else it
+        }
+        var pressed: ExtensionViewAction? = null
+        val handle = ExtensionViewHandle({ _, action -> pressed = action }, { _, _ -> }, {}, {})
+        rule.setContent {
+            PersonaTheme(darkTheme = true, reduceMotion = true) {
+                ExtensionScene(scene.copy(pins = pins), ExtensionViewState(), handle, compact = true)
+            }
+        }
+        val preview = rule.onNode(hasTestTag("extension-scene") and hasClickAction())
+        preview.performClick()
+        rule.onNodeWithTag("scene-zoom-in").performClick()
+        rule.onNodeWithTag("scene-reset").assertIsEnabled()
+        rule.onNode(hasTestTag("scene-pin-light.living") and hasAnyAncestor(hasTestTag("scene-full-screen")))
+            .assertIsEnabled().performClick()
+        rule.onNodeWithTag("scene-full-screen").assertDoesNotExist()
+        rule.runOnIdle {
+            assertEquals("toggle", pressed?.id)
+            assertEquals("Turn the light on?", pressed?.confirm)
+        }
+        preview.performClick()
+        rule.onNodeWithTag("scene-reset").assertIsNotEnabled()
     }
 
     private fun capture(name: String) {
