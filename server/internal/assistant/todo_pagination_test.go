@@ -11,8 +11,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/db"
 )
 
 // GET /api/v1/todos's pages (#14506): a walk reads every row once in the list's order, repeated walks are the same,
@@ -181,6 +183,141 @@ func TestTodosPaginationKeepsCompleteAnswerWithoutParameters(t *testing.T) {
 	}
 }
 
+func TestTodosClosedLimitBoundsClosedButKeepsOpenAndWholeListNumbers(t *testing.T) {
+	const closedLimit = 50
+	s := manyTodos(closedLimit + 3)
+	old := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+
+	s.todos.mu.Lock()
+	s.todos.todos["todo_open_old"] = &Todo{ID: "todo_open_old", Title: "An old open item",
+		CreatedAt: old, UpdatedAt: old}
+	failedAt := old.Add(time.Minute)
+	s.todos.todos["todo_failed_old"] = &Todo{ID: "todo_failed_old", Title: "An old failed start",
+		CreatedAt: old, UpdatedAt: failedAt, DoneAt: &failedAt, StartError: "the launcher was offline"}
+	for i, id := range []string{"todo_shared_a", "todo_shared_b"} {
+		at := old.Add(time.Duration(i+2) * time.Minute)
+		s.todos.todos[id] = &Todo{ID: id, Title: "Waiting on vendor " + id, CreatedAt: at, UpdatedAt: at,
+			Supervision: &Supervision{State: reviewParked, UpdatedAt: at, Reviews: []TaskReview{{
+				At: at, Verdict: reviewParked, Reason: "waiting on the vendor", Until: at.Add(time.Hour),
+				WaitingOn: parkSomeoneElse, Evidence: &ParkEvidence{Kind: "person_reply", Target: "Vendor Ops"},
+			}}}}
+	}
+	s.todos.mu.Unlock()
+	setTodosV2ForTest(t, s, true, false)
+
+	bounded, boundedBody := todoPageGet(t, s, fmt.Sprintf("?closed_limit=%d", closedLimit))
+	whole, wholeBody := todoPageGet(t, s, "")
+	if got, want := len(whole.Todos), closedLimit+7; got != want {
+		t.Fatalf("the full list has %d rows, want %d", got, want)
+	}
+	var wholeFields map[string]json.RawMessage
+	if err := json.Unmarshal(wholeBody, &wholeFields); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"closed_next_cursor", "closed_has_more"} {
+		if _, ok := wholeFields[k]; ok {
+			t.Errorf("the unparameterized list carries %q", k)
+		}
+	}
+	if got, want := len(bounded.Todos), closedLimit+4; got != want {
+		t.Fatalf("the bounded list has %d rows, want %d", got, want)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(boundedBody, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"next_cursor", "has_more", "oversized"} {
+		if _, ok := fields[k]; ok {
+			t.Errorf("the bounded default carries pagination field %q", k)
+		}
+	}
+	var closedNext struct {
+		Todos      []listedTodo `json:"todos"`
+		NextCursor string       `json:"closed_next_cursor"`
+		HasMore    bool         `json:"closed_has_more"`
+	}
+	if err := json.Unmarshal(boundedBody, &closedNext); err != nil {
+		t.Fatal(err)
+	}
+	if closedNext.NextCursor == "" || !closedNext.HasMore {
+		t.Fatalf("the bounded default has no closed cursor: %+v", closedNext)
+	}
+
+	byID := make(map[string]listedTodo, len(bounded.Todos))
+	closed := 0
+	for _, row := range bounded.Todos {
+		byID[row.ID] = row
+		if row.closedForGood() {
+			closed++
+		}
+	}
+	if closed != closedLimit {
+		t.Errorf("the bounded list carries %d closed rows, want %d", closed, closedLimit)
+	}
+	for _, id := range []string{"todo_open_old", "todo_failed_old", "todo_shared_a", "todo_shared_b"} {
+		if _, ok := byID[id]; !ok {
+			t.Errorf("the default list dropped open row %s", id)
+		}
+	}
+	for i := range 3 {
+		id := fmt.Sprintf("todo_bench%06d", i)
+		if _, ok := byID[id]; ok {
+			t.Errorf("the default list carries the closed row %s outside the window", id)
+		}
+	}
+	if !reflect.DeepEqual(bounded.Counts, whole.Counts) {
+		t.Errorf("the default counts describe the bounded rows, not the whole list: %+v, want %+v", bounded.Counts, whole.Counts)
+	}
+	if len(whole.SharedBlockers) == 0 || !reflect.DeepEqual(bounded.SharedBlockers, whole.SharedBlockers) {
+		t.Errorf("the default shared blockers are incomplete: %+v, want %+v", bounded.SharedBlockers, whole.SharedBlockers)
+	}
+	if len(boundedBody) >= len(wholeBody) {
+		t.Errorf("the bounded default is %d bytes, not smaller than the full page's %d", len(boundedBody), len(wholeBody))
+	}
+
+	var walked []string
+	cursor := closedNext.NextCursor
+	for page := 0; cursor != ""; page++ {
+		if page > 20 {
+			t.Fatal("the closed cursor walk did not end")
+		}
+		next, _ := todoPageGet(t, s, "?limit=7&cursor="+url.QueryEscape(cursor))
+		walked = append(walked, todoIDs(next.Todos)...)
+		cursor = next.NextCursor
+	}
+	if !slices.Contains(walked, "todo_bench000000") || !slices.Contains(walked, "todo_bench000002") {
+		t.Fatalf("the closed cursor did not reach the omitted closed rows: %v", walked)
+	}
+}
+
+func TestTodosClosedLimitCarriesCancelledRowsAndTheirCursor(t *testing.T) {
+	s := manyTodos(1)
+	at := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	s.todos.mu.Lock()
+	s.todos.todos["todo_cancelled"] = &Todo{ID: "todo_cancelled", Title: "Cancelled", CreatedAt: at, UpdatedAt: at,
+		DoneAt: &at, CancelledAt: &at, DoneBy: db.DoneByCancelled}
+	s.todos.mu.Unlock()
+
+	bounded, body := todoPageGet(t, s, "?closed_limit=1")
+	if len(bounded.Todos) != 1 || bounded.Todos[0].ID != "todo_cancelled" || bounded.Todos[0].CancelledAt == nil {
+		t.Fatalf("closed limit did not keep the cancelled row: %+v", bounded.Todos)
+	}
+	var raw struct {
+		NextCursor string `json:"closed_next_cursor"`
+		HasMore    bool   `json:"closed_has_more"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw.NextCursor == "" || !raw.HasMore {
+		t.Fatalf("cancelled row's page has no cursor: %+v", raw)
+	}
+	older, _ := todoPageGet(t, s, "?cursor="+url.QueryEscape(raw.NextCursor))
+	if len(older.Todos) != 1 || older.Todos[0].ID != "todo_bench000000" {
+		t.Fatalf("cursor did not reach the older done row: %+v", older.Todos)
+	}
+}
+
 func TestTodosPaginationRefusesBadLimitAndCursor(t *testing.T) {
 	s := manyTodos(3)
 	first, _ := todoPageGet(t, s, "?limit=1")
@@ -194,6 +331,11 @@ func TestTodosPaginationRefusesBadLimitAndCursor(t *testing.T) {
 		{"?limit=abc", "invalid_todo_limit"},
 		{"?limit=201", "invalid_todo_limit"},
 		{"?limit=", "invalid_todo_limit"},
+		{"?closed_limit=0", "invalid_todo_closed_limit"},
+		{"?closed_limit=-1", "invalid_todo_closed_limit"},
+		{"?closed_limit=abc", "invalid_todo_closed_limit"},
+		{"?closed_limit=201", "invalid_todo_closed_limit"},
+		{"?closed_limit=", "invalid_todo_closed_limit"},
 		{"?cursor=", "invalid_todo_cursor"},
 		{"?cursor=not-base64!", "invalid_todo_cursor"},
 		{"?cursor=" + enc(`{}`), "invalid_todo_cursor"},
@@ -217,6 +359,8 @@ func TestTodosPaginationRefusesBadLimitAndCursor(t *testing.T) {
 	}
 	for _, query := range []string{
 		"?limit=1", "?limit=200",
+		"?closed_limit=1", "?closed_limit=200",
+		"?limit=1&closed_limit=0", // a paginated read ignores the unpaged list's bound, even when it is invalid
 		"?cursor=" + url.QueryEscape(first.NextCursor),
 		"?limit=1&cursor=" + url.QueryEscape(first.NextCursor),
 	} {

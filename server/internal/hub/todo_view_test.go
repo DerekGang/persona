@@ -343,6 +343,14 @@ func TestTodoCountsMergeMatchesDecoding(t *testing.T) {
 	if got, want := string(sums["counts"]), `{"open":3,"needs_you":1,"in_progress":0,"sections":{"needs_you":1,"later":3,"todo":2},"assistant_needs":7,"note":"a","x":1}`; !sameJSONValue(got, want) {
 		t.Fatalf("two newer managers' %s, want %s", got, want)
 	}
+	sums = todoListSums([]listAnswer{
+		listOf("assistant", 200, `{"todos":[],"closed_next_cursor":"ca","closed_has_more":true}`),
+		listOf("m-b", 200, `{"todos":[],"closed_next_cursor":"cb","closed_has_more":true}`),
+		listOf("m-c", 200, `{"todos":[]}`),
+	})
+	if got, want := string(sums["closed_cursors"]), `{"assistant":{"next_cursor":"ca","has_more":true},"m-b":{"next_cursor":"cb","has_more":true}}`; !sameJSONValue(got, want) {
+		t.Fatalf("closed cursors %s, want %s", got, want)
+	}
 }
 
 // sameJSONValue: a and b are the same JSON value, whatever the order of their members.

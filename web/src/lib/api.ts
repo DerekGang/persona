@@ -151,7 +151,7 @@ export class HubTimeoutError extends Error {
   }
 }
 
-type ApiOptions = RequestInit & { json?: unknown; token?: string; tokenOwner?: string; isAuthContextCurrent?: () => boolean; onResponse?: (headers: Headers, status: number) => void; readBlob?: (response: Response, signal?: AbortSignal | null) => Promise<Blob>; allowHtmlResponse?: boolean };
+type ApiOptions = RequestInit & { json?: unknown; query?: Record<string, string>; token?: string; tokenOwner?: string; isAuthContextCurrent?: () => boolean; onResponse?: (headers: Headers, status: number) => void; readBlob?: (response: Response, signal?: AbortSignal | null) => Promise<Blob>; allowHtmlResponse?: boolean };
 
 /** `tokenOwner`: explicit credentials opt into 401 recovery only while both the token and credential generation are current.
  *  `isAuthContextCurrent`: an optional additional lifetime fence for a request scoped to a view or manager.
@@ -212,7 +212,7 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 async function request<T>(path: string, init: ApiOptions, binary = false): Promise<T> {
-  const { onResponse, isAuthContextCurrent, readBlob, allowHtmlResponse, ...fetchOptions } = init;
+  const { onResponse, isAuthContextCurrent, readBlob, allowHtmlResponse, query, ...fetchOptions } = init;
   const owner = init.token === undefined ? credentialOwner() : init.tokenOwner;
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${init.token ?? getToken()}`);
@@ -235,7 +235,9 @@ async function request<T>(path: string, init: ApiOptions, binary = false): Promi
   try {
     // manual: a redirect (the sign-in layer in front of the hub has expired) arrives as one instead of being followed
     // into a cross-origin page this script cannot read; the hub itself never redirects its API
-    res = await fetch(`${BASE}/api/v1${path}`, { redirect: "manual", ...fetchOptions, headers, body });
+    const q = new URLSearchParams(query);
+    const url = `${BASE}/api/v1${path}${q.size ? `${path.includes("?") ? "&" : "?"}${q}` : ""}`;
+    res = await fetch(url, { redirect: "manual", ...fetchOptions, headers, body });
   } catch (e) {
     // a breadcrumb for an error report: the method, the path's pattern (no ids, no query) and that it did not get there
     if (!isAbort(e)) requestCrumb(method, path, 0);

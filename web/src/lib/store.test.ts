@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { managerHeaderFor } from "./manager-choice";
-import { applyMachine, dropAnswered, endInteraction, getState, hubHas, larkOn, putTodo, refresh, refreshAssistant, refreshTodos, reset, setSpacesSupported } from "./store";
+import { applyMachine, dropAnswered, endInteraction, getState, hubHas, larkOn, loadOlderClosed, putTodo, refresh, refreshAssistant, refreshTodos, reset, setSpacesSupported } from "./store";
 
 describe("待办 store 与 404 兼容 (C2)", () => {
   beforeEach(() => {
@@ -66,6 +66,115 @@ describe("待办 store 与 404 兼容 (C2)", () => {
     expect(st.spacesSupported).toBe(true);
     expect(st.todos).toHaveLength(1);
     expect(st.todos[0].id).toBe("todo-1");
+  });
+
+  it("loads older closed rows only through the advertised cursor and the named manager (#15683)", async () => {
+    const recent = Array.from({ length: 50 }, (_, i) => ({
+      id: `todo-${i}`,
+      title: `待办 ${i}`,
+      created_at: `2026-11-24T10:${String(59 - i).padStart(2, "0")}:00Z`,
+      updated_at: "2026-11-24T10:00:00Z",
+      done_at: "2026-11-24T11:00:00Z",
+      spaces: [],
+    }));
+    const older = {
+      id: "todo-older",
+      title: "更早结束的待办",
+      created_at: "2026-10-01T10:00:00Z",
+      updated_at: "2026-10-01T11:00:00Z",
+      done_at: "2026-10-01T11:00:00Z",
+      spaces: [],
+    };
+    const cancelled = {
+      id: "todo-cancelled",
+      title: "更早取消的待办",
+      created_at: "2026-09-30T10:00:00Z",
+      updated_at: "2026-09-30T11:00:00Z",
+      done_at: "2026-09-30T11:00:00Z",
+      cancelled_at: "2026-09-30T11:00:00Z",
+      done_by: "cancelled",
+      spaces: [],
+    };
+    const requested: string[] = [];
+    const managers: (string | null)[] = [];
+    const fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const u = new URL(url, "http://hub");
+      if (!u.pathname.endsWith("/todos")) return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      requested.push(u.pathname + u.search);
+      managers.push(new Headers(init?.headers).get("X-Persona-Manager"));
+      if (u.searchParams.get("cursor") === "closed-1") {
+        return Promise.resolve(new Response(JSON.stringify({
+          todos: [older, cancelled],
+          has_more: false,
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        todos: recent,
+        counts: { open: 0, needs_you: 0, in_progress: 0, sections: { done: 55, cancelled: 0 } },
+        shared_blockers: [],
+        closed_cursors: { assistant: { next_cursor: "closed-1", has_more: true } },
+      }), { status: 200, headers: { ETag: 'W/"t1-closed"' } }));
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await refreshTodos();
+    expect(requested).toEqual(["/api/v1/todos?closed_limit=50"]);
+    expect(getState().todos).toHaveLength(50);
+
+    await loadOlderClosed();
+    expect(requested).toEqual(["/api/v1/todos?closed_limit=50", "/api/v1/todos?limit=50&cursor=closed-1"]);
+    expect(managers).toEqual([null, "assistant"]);
+    expect(getState().todos.map((t) => t.id)).toContain("todo-older");
+    expect(getState().todos.map((t) => t.id)).toContain("todo-cancelled");
+    expect(getState().closedCursors.assistant).toEqual({ next_cursor: "", has_more: false });
+  });
+
+  it("advances each manager's closed cursor independently and keeps successful pages when another fails (#15683)", async () => {
+    const closed = (id: string, manager: string) => ({
+      id,
+      title: id,
+      manager,
+      created_at: "2026-10-01T10:00:00Z",
+      updated_at: "2026-10-01T11:00:00Z",
+      done_at: "2026-10-01T11:00:00Z",
+      spaces: [],
+    });
+    let failB = true;
+    const fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const u = new URL(url, "http://hub");
+      if (!u.pathname.endsWith("/todos")) return Promise.resolve(new Response("{}", { status: 200 }));
+      const manager = new Headers(init?.headers).get("X-Persona-Manager");
+      const cursor = u.searchParams.get("cursor");
+      if (!cursor) {
+        return Promise.resolve(new Response(JSON.stringify({
+          todos: [],
+          closed_cursors: {
+            a: { next_cursor: "a1", has_more: true },
+            b: { next_cursor: "b1", has_more: true },
+          },
+        }), { status: 200 }));
+      }
+      if (manager === "b" && failB) return Promise.resolve(new Response(JSON.stringify({ error: "down" }), { status: 503 }));
+      return Promise.resolve(new Response(JSON.stringify({
+        todos: [closed(manager === "a" ? "older-a" : "older-b", manager ?? "")],
+        has_more: false,
+      }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await refreshTodos();
+    await loadOlderClosed();
+    expect(getState().todos.map((t) => t.id)).toEqual(["older-a"]);
+    expect(getState().closedCursors.a).toEqual({ next_cursor: "", has_more: false });
+    expect(getState().closedCursors.b).toEqual({ next_cursor: "b1", has_more: true });
+    expect(getState().closedError).not.toBeNull();
+
+    failB = false;
+    await loadOlderClosed();
+    expect(getState().todos.map((t) => t.id)).toEqual(["older-a", "older-b"]);
+    expect(getState().closedCursors.a).toEqual({ next_cursor: "", has_more: false });
+    expect(getState().closedCursors.b).toEqual({ next_cursor: "", has_more: false });
+    expect(getState().closedError).toBeNull();
   });
 
   it("refreshTodos 独立重拉待办，若 404 设 todosSupported=false 与 spacesSupported=false", async () => {
