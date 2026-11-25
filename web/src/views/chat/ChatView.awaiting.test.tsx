@@ -356,6 +356,7 @@ describe("a message waiting for its turn to start (#2450)", () => {
     expect(stopControl()).not.toBeNull();
   });
 
+
   it("does not carry the end of a streamed reply into a newly echoed turn", async () => {
     transcript.items = [
       { id: "u1", seq: 1, role: "user", kind: "text", text: "Previously asked", ts: new Date(Date.now() - 3_000).toISOString() },

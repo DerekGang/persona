@@ -73,7 +73,7 @@ import { COMPOSER_INPUT, lostWith } from "../../lib/dock-focus";
 import { FailureNote, showsFailureNote } from "./FailureNote";
 import { LazyCloseoutCard } from "./closeout-chunks";
 import { shownCloseout } from "../../lib/closeout";
-import { AWAIT_MS, awaitingTurn, COMMAND_DOCK_MAX, DOCK_MAX, RETRY_IDLE_GRACE_MS, turnStart } from "./dock";
+import { AWAIT_MS, awaitingTurn, COMMAND_DOCK_MAX, DOCK_MAX, pickupStateForWait, RETRY_IDLE_GRACE_MS, turnStart } from "./dock";
 const ChatEmptyState = lazyPage(() => import("./ChatEmptyState").then((m) => m.ChatEmptyState));
 import { HEADER_SLOT, HEADER_SLOT_END, HEADER_SLOT_START } from "./header";
 import { AgentModelPill, AssistantModelPill, useAssistantTurnFix } from "./ModelPill";
@@ -556,7 +556,11 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const [stoppedInput, setStoppedInput] = useState<{ chat: string; id: string }>();
   const stoppedTurn = stoppedInput?.chat === chatNow.current ? stoppedInput.id : undefined;
   // An existing background command can keep the row working before the next foreground turn picks up the echo.
-  const pickupState = state === "working" && session?.background_working ? "idle" : state;
+  // background_working alone is not proof the foreground is idle; pickupStateForWait only demotes it while this turn
+  // has no foreground activity yet, so a live turn keeps the real working state (review P1).
+  const foregroundActive = Boolean(tr.streaming || lastSeg?.answer ||
+    lastSeg?.steps.some((step) => step.kind === "thinking" || (step.kind === "tool" && !step.result)));
+  const pickupState = pickupStateForWait(state, session?.background_working, foregroundActive);
   const inputKey = lastSeg?.user ? `${mid}/${sid}/${lastSeg.user.id}` : undefined;
   const hubStateAt = Date.parse(session?.state_since ?? "");
   const [observedInput, setObservedInput] = useState<{ key: string; hubStateAt: number; seenAt: number }>();

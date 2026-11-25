@@ -106,3 +106,18 @@ export function awaitingTurn(
   }
   return true;
 }
+
+/**
+ * State used for the pre-working pickup wait. An existing background command can keep the session `working` while
+ * the next foreground turn has not been picked up yet, in which case that working flag is background-only and the
+ * echo still needs the idle-based wait. Once this turn already streams, answers, thinks or runs an unresolved tool,
+ * the foreground is demonstrably active: never reinterpret that `working` as idle, otherwise a live turn falls into
+ * the empty-response/Retry path and loses the real Interrupt guard (review P1 on #14941).
+ */
+export function pickupStateForWait(
+  state: AgentState,
+  backgroundWorking: boolean | undefined,
+  foregroundActive: boolean,
+): AgentState {
+  return state === "working" && backgroundWorking === true && !foregroundActive ? "idle" : state;
+}
