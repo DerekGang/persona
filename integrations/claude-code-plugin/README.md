@@ -71,7 +71,7 @@ another session, gets `403`.
   `permissions: true` is returned only when the session is served by the plugin and not managed by `persona-hooks` or an
   external tmux pane. `retry_ms`, when present, is how long to wait before the next poll: a session the node does not
   deliver to this way (one in a Persona terminal, the assistant's own) is told to come back much later.
-- `classic_passed_over: true` is sent after a completed main-loop turn used tools but no `classic.PreToolUse` arrived.
+- `classic_passed_over: true` is sent after a main-loop turn used tools but no `classic.PreToolUse` arrived.
   Claude Code's managed-settings guard can do that to every `classic.*` hook in a user-tier plugin. The node then
   returns no `permissions: true` for that session, refuses direct `/permission` calls with `passthrough`, withdraws any
   active plugin card, and leaves `clq_` question cards alone. The field is omitted while classic hooks reach the plugin.

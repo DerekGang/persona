@@ -54,6 +54,9 @@ type Engine = EngineInterface
 
 type PermissionAuth = { sock: string; session: string }
 
+/** Time a main-loop tool call gets to reach classic.PreToolUse before the session counts as passed over. */
+const CLASSIC_HOOK_GRACE_MS = 2_000
+
 type ActivePerm = {
   reqId: string
   sock: string
@@ -76,12 +79,15 @@ export const register: Register = on => {
   let override: SessionOverride | undefined
   let permissionAuth: PermissionAuth | undefined
   let classicHooks = createClassicHookObservation()
+  let classicTurn = 0
+  let wakePoll: (() => void) | undefined
   const preToolCache = createPreToolCache()
   const activePerms = new Map<string, ActivePerm>()
   let permSeq = 0
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
+      classicTurn++
       const session = await $.session.id().catch(() => '')
       activeTurn = { session, turnId: e.turnId }
     }
@@ -93,8 +99,13 @@ export const register: Register = on => {
       activeTurn = undefined
     }
     if (e.agentId === undefined) {
+      classicTurn++
+      const wasPassedOver = classicHooks.passedOver
       classicHooks = finishClassicTurn(classicHooks)
-      if (classicHooks.passedOver) permissionAuth = undefined
+      if (classicHooks.passedOver) {
+        permissionAuth = undefined
+        if (!wasPassedOver) wakePoll?.()
+      }
     }
     try {
       const agentId = e.agentId ?? ''
@@ -112,6 +123,7 @@ export const register: Register = on => {
       activeTurn = { session, turnId: e.turnId }
     }
     let step = e
+    const observingTurn = classicTurn
     if (e.agentId === undefined && override !== undefined) {
       const session = await $.session.id().catch(() => '')
       const sessionModel = override.model !== undefined ? await $.session.model().catch(() => undefined) : undefined
@@ -122,6 +134,25 @@ export const register: Register = on => {
     const output = yield* next(step)
     try {
       classicHooks = noteTurnStepToolUses(classicHooks, e.agentId, output)
+      if (e.agentId === undefined && !classicHooks.passedOver && classicHooks.toolUses > 0) {
+        void sleep($, CLASSIC_HOOK_GRACE_MS)
+          .then(() => {
+            if (
+              observingTurn !== classicTurn ||
+              classicHooks.passedOver ||
+              classicHooks.toolUses === 0 ||
+              classicHooks.preToolUses > 0
+            ) {
+              return
+            }
+            classicHooks = { ...classicHooks, passedOver: true }
+            permissionAuth = undefined
+            wakePoll?.()
+          })
+          .catch(() => {
+            // A missing clock only delays the turn.complete fallback.
+          })
+      }
     } catch {
       // Observation never changes the step.
     }
@@ -359,6 +390,9 @@ export const register: Register = on => {
         if (activeTurn?.turnId === turnId) activeTurn = undefined
       },
       () => classicHooks.passedOver,
+      wake => {
+        wakePoll = wake
+      },
       async (session, update) => {
         const sessionModel = update.model !== undefined ? await $.session.model().catch(() => undefined) : undefined
         override = mergeOverride(override, session, update, sessionModel)
@@ -466,6 +500,7 @@ async function run(
   getActiveTurn: () => ActiveTurn | undefined,
   clearActiveTurn: (turnId: string) => void,
   classicPassedOver: () => boolean,
+  setWakePoll: (wake: (() => void) | undefined) => void,
   onSettings: (session: string, update: SettingsUpdate) => Promise<void>,
   setPermissionAuth: (auth: PermissionAuth | undefined) => void,
 ): Promise<void> {
@@ -481,6 +516,20 @@ async function run(
   let reachable: boolean | undefined
   while (current()) {
     const session = await $.session.id()
+    setWakePoll(() => {
+      void $.http
+        .fetch(`${BASE}/poll`, post(sock, {
+          session_id: session,
+          plugin_version: pluginVersion,
+          engine_version: engineVersion,
+          capabilities: CAPABILITIES,
+          classic_passed_over: true,
+          wait_ms: 0,
+        }))
+        .catch(() => {
+          // The regular poll loop reconnects.
+        })
+    })
     let answer: PollAnswer
     try {
       const res = await $.http.fetch(`${BASE}/poll`, post(sock, {

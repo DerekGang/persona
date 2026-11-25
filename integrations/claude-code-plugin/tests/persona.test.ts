@@ -349,17 +349,16 @@ describe('persona plugin', () => {
     while (!(await step.next()).done) {
       // drain the step
     }
-    await $.turn.complete({ turnId: 'turn-passed-over', answer: 'done' } as never)
+    await w.clock.advance(2_000)
+    await w.clock.settle()
 
     expect(await $.classic.PermissionRequest(permEvent({ tool_use_id: 'toolu_skipped' }) as never)).toEqual({})
     expect(w.requests.filter(r => r.url.endsWith('/permission'))).toEqual([])
 
-    await w.clock.advance(60_000)
-    await w.clock.settle()
-
     const polls = w.requests.filter(r => r.url.endsWith('/poll'))
     expect(polls.length).toBe(2)
     expect(polls[1]?.body).toMatchObject({ classic_passed_over: true })
+    await $.turn.complete({ turnId: 'turn-passed-over', answer: 'done' } as never)
   })
 
   test('keeps classic permission bridging when classic.PreToolUse reaches the plugin', async ($, on) => {
