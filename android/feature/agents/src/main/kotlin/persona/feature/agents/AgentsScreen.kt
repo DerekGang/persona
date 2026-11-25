@@ -60,6 +60,14 @@ import java.time.Instant
 
 private const val AGENTS_PREFETCH_ROWS = 6
 
+/** The unread rows a bulk confirmation counts, and every row it releases from this visit's held Seen places. */
+internal data class MarkAllSeenBatch(val unread: List<AgentSession>, val release: List<AgentSession>)
+
+internal fun markAllSeenBatch(rows: List<AgentSession>): MarkAllSeenBatch {
+    val release = rows.distinctBy(AgentSession::id)
+    return MarkAllSeenBatch(release.filter { it.unseen }, release)
+}
+
 /** Inputs supplied by the shell's single merged list. The footer is outside its scroll viewport. */
 class AgentsSidebarLayout(
     val prefix: LazyListScope.() -> Unit,
@@ -188,7 +196,7 @@ internal fun AgentsScreen(
     var operationDialog by remember { mutableStateOf<AgentOperationDialog?>(null) }
     var pickingTodoForSession by remember { mutableStateOf<Session?>(null) }
     // "Mark all as read" asks first and names how many it marks (iOS confirmReadAll).
-    var confirmRead by remember { mutableStateOf<List<AgentSession>?>(null) }
+    var confirmRead by remember { mutableStateOf<MarkAllSeenBatch?>(null) }
     /** A project being put on a to-do ("Link to to-do…"): its machine and its name as the hub keys it. */
     var pickingTodoForSpace by remember { mutableStateOf<Pair<String, String>?>(null) }
     val todos by (model.tasks?.todos ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsStateWithLifecycle()
@@ -424,14 +432,14 @@ internal fun AgentsScreen(
     val spaceMenu: @Composable (AgentSpace, Boolean) -> Unit = { space, inList ->
         val session = space.members.first().session
         // Mark all as read: the finished ones nobody has seen, Just finished ones too (#9786)
-        val unread = space.members.filter { it.unseen }
+        val markAll = markAllSeenBatch(space.members)
         // A whole project on a to-do (#1616, iOS SpaceTodoMenu): only a herdr space the hub can name, on a hub that knows projects.
         val todoSpace = session.todoSpaceName?.takeIf { model.tasks?.spacesSupported == true }
         val linked = todoSpace?.let { todos.forSpace(session.machineId, it) }
         AgentSpaceMenu(session, space.preferenceKey in page.preferences.pins.spaces, space.preferenceKey in page.preferences.mutes.spaces,
             operations.busy, onPin = { model.spacePin(session) }, onMute = { model.spaceMute(session) },
             onRename = { operationDialog = AgentOperationDialog.RenameSpace(session) },
-            onMarkRead = unread.takeIf { it.isNotEmpty() }?.let { rows -> { confirmRead = rows } },
+            onMarkRead = markAll.takeIf { it.unread.isNotEmpty() }?.let { batch -> { confirmRead = batch } },
             onOpen = if (inList) ({ navigator.navigate(SpaceRoute(space.id, space.name)) }) else null, compact = inList,
             todo = todoSpace?.let { name ->
                 SpaceTodoActions(linked != null, onLink = { pickingTodoForSpace = session.machineId to name },
@@ -444,13 +452,13 @@ internal fun AgentsScreen(
         val space = page.spacesById[repo.id]
         if (space != null) {
             val session = space.members.first().session
-            val unread = space.members.filter { it.unseen }
+            val markAll = markAllSeenBatch(space.members)
             val todoSpace = session.todoSpaceName?.takeIf { model.tasks?.spacesSupported == true }
             val linked = todoSpace?.let { todos.forSpace(session.machineId, it) }
             agentSpaceActions(session, space.preferenceKey in page.preferences.pins.spaces, space.preferenceKey in page.preferences.mutes.spaces,
                 operations.busy, onPin = { model.spacePin(session) }, onMute = { model.spaceMute(session) },
                 onRename = { operationDialog = AgentOperationDialog.RenameSpace(session) },
-                onMarkRead = unread.takeIf { it.isNotEmpty() }?.let { rows -> { confirmRead = rows } },
+                onMarkRead = markAll.takeIf { it.unread.isNotEmpty() }?.let { batch -> { confirmRead = batch } },
                 onOpen = { navigator.navigate(SpaceRoute(space.id, space.name)) },
                 todo = todoSpace?.let { name ->
                     SpaceTodoActions(linked != null, onLink = { pickingTodoForSpace = session.machineId to name },
@@ -460,9 +468,9 @@ internal fun AgentsScreen(
                         onClick = { navigator.navigate(persona.core.navigation.TodoDetailRoute(todo.id)) })
                 })
         } else {
-            val unread = (repo.rows + page.list.groups.filter { it.under == repo.id }.flatMap { it.rows }).filter { it.unseen }
-            listOfNotNull(JAction(stringResource(R.string.agents_mark_all_read), PhIcons.Check, onClick = { confirmRead = unread })
-                .takeIf { unread.isNotEmpty() })
+            val markAll = markAllSeenBatch(repo.rows + page.list.groups.filter { it.under == repo.id }.flatMap { it.rows })
+            listOfNotNull(JAction(stringResource(R.string.agents_mark_all_read), PhIcons.Check, onClick = { confirmRead = markAll })
+                .takeIf { markAll.unread.isNotEmpty() })
         }
     }
     // "By machine" shows a herdr tab's agents as a group (#2320), as the web's sidebar; the other groupings list one agent a row
@@ -713,14 +721,15 @@ internal fun AgentsScreen(
             }
             if (page.settings.quick == AgentQuickFilter.Unread && page.list.unreadShown.isNotEmpty()) item("mark-read") {
                 // The same set iOS counts and marks: the list's unread ids, whichever groups (or none) draw them.
-                val unread = remember(page.list, page.sessions) {
+                val markAll = remember(page.list, page.sessions) {
                     val rows = page.list.groups.flatMap { it.rows }.associateBy { it.id }
                     val sessions = page.sessions.associateBy { it.key.path }
-                    page.list.unreadShown.distinct().mapNotNull { id -> rows[id] ?: sessions[id]?.let(::AgentSession) }
+                    val unread = page.list.unreadShown.distinct().mapNotNull { id -> rows[id] ?: sessions[id]?.let(::AgentSession) }
+                    markAllSeenBatch(page.list.groups.flatMap { it.rows } + unread)
                 }
                 JRow(stringResource(R.string.agents_mark_all_read), leadingIcon = PhIcons.Check,
-                    value = pluralStringResource(R.plurals.agents_mark_all_read_count, unread.size, unread.size),
-                    chevron = false, onClick = { confirmRead = unread })
+                    value = pluralStringResource(R.plurals.agents_mark_all_read_count, markAll.unread.size, markAll.unread.size),
+                    chevron = false, onClick = { confirmRead = markAll })
             }
             if (firstPageIncomplete) item("initial-state") {
                 if (page.pagination.failed) JNotice(
@@ -1242,8 +1251,10 @@ internal fun AgentsScreen(
             },
         )
     }
-    confirmRead?.let { rows ->
-        MarkAllReadDialog(rows.size, onDismiss = { confirmRead = null }) { model.markRead(rows, clear = true) }
+    confirmRead?.let { markAll ->
+        MarkAllReadDialog(markAll.unread.size, onDismiss = { confirmRead = null }) {
+            model.markRead(markAll.unread, clear = true, release = markAll.release)
+        }
     }
     if (newAgent) {
         if (creationModel != null) NewAgentDialog(creationModel, page.machines, connection == ConnectionState.Online,

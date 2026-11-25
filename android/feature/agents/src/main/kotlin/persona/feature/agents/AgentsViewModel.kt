@@ -857,10 +857,10 @@ internal class AgentsViewModel(
     }
     fun opened(row: AgentSession) = keepQuickRows(listOf(row))
 
-    fun markRead(rows: List<AgentSession>, clear: Boolean = false) = localChange {
+    fun markRead(rows: List<AgentSession>, clear: Boolean = false, release: List<AgentSession> = rows) = localChange {
         if (clear && page.value.preferences.seenRows == AgentSeenRows.Stay) {
             val versions = rows.associate { it.id to it.session.readVersion }
-            clearSeen(versions.keys, versions)
+            clearSeen(release.mapTo(mutableSetOf(), AgentSession::id), versions)
             try {
                 preferences.markSeen(rows.map { it.session })
             } finally {

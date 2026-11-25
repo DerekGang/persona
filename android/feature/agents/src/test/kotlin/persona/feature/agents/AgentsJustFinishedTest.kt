@@ -186,6 +186,37 @@ class AgentsJustFinishedTest {
         awaitSection("state/unread", unread.last().key.path)
     }
 
+    @Test fun markAllCountsUnreadAndReleasesHeldRowsFromTheTarget() {
+        val held = AgentSession(session("held", "idle"), seenPlace = persona.core.domain.sort.AgentSeenPlace.Unread)
+        val unread = AgentSession(session("unread", "unread"))
+        val idle = AgentSession(session("idle", "idle"))
+
+        val markAll = markAllSeenBatch(listOf(held, unread, idle))
+
+        assertEquals(listOf("machine/unread"), markAll.unread.map(AgentSession::id))
+        assertEquals(listOf("machine/held", "machine/unread", "machine/idle"), markAll.release.map(AgentSession::id))
+    }
+
+    @Test fun markAllReleasesAHeldRowAndTheUnreadRowTogether(): Unit = runBlocking {
+        val held = session("bulk-held", "unread")
+        val unread = session("bulk-unread", "unread")
+        sessions.value += listOf(held, unread)
+        model = model()
+        awaitSection("state/unread", held.key.path, unread.key.path)
+
+        preferences.markSeen(listOf(held))
+        val section = withTimeout(10_000) {
+            model!!.page.first { page ->
+                page.list.groups.singleOrNull { it.id == "state/unread" }?.heldSeen == listOf(held.key.path)
+            }
+        }.list.groups.single { it.id == "state/unread" }
+        val markAll = markAllSeenBatch(section.rows)
+
+        model!!.markRead(markAll.unread, clear = true, release = markAll.release)
+
+        withTimeout(10_000) { model!!.page.first { page -> page.list.groups.none { it.id == "state/unread" } } }
+    }
+
     @Test fun aSeenChatHoldsNothingAndLeavesJustFinishedAsItIs() = runBlocking {
         model = model()
         visible.value = SessionKey("machine", "seen")
