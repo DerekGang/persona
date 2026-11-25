@@ -84,19 +84,30 @@ export function ChatSearch({
   notice: controlledNotice,
   onStopLoadEarlier,
 }: ChatSearchProps) {
-  const [applied, setApplied] = useState(query);
+  const [settledQuery, setSettledQuery] = useState(query);
   useEffect(() => {
     if (controlledResults !== undefined) return;
-    const id = window.setTimeout(() => setApplied(query), settleMs);
+    const id = window.setTimeout(() => setSettledQuery(query), settleMs);
     return () => clearTimeout(id);
   }, [query, settleMs, controlledResults]);
-  const searching = controlledSearching ?? (controlledResults === undefined && applied !== query);
+  const applied = controlledResults !== undefined ? query : settledQuery;
+  // A controlled result object belongs to the query that was current when that object first arrived. Keeping the
+  // object as the only dependency lets a parent update query and results together, while a query-only update hides
+  // the old hits until the parent supplies a new object.
+  const controlledResultQuery = useMemo(
+    () => controlledResults === undefined ? undefined : query,
+    [controlledResults], // eslint-disable-line react-hooks/exhaustive-deps -- the result object, not query, starts a new result set
+  );
+  const controlledResultsStale = controlledResults !== undefined && controlledResultQuery !== query;
+  const searching = controlledResults !== undefined
+    ? Boolean(controlledSearching) || controlledResultsStale
+    : controlledSearching ?? applied !== query;
   // only while the panel shows: the query stays after a pick, and the chat keeps changing under it. A controlled
   // result set or matcher replaces searchChat but keeps the same debounce path.
   const results = useMemo(() => {
-    if (controlledResults !== undefined) return controlledResults;
+    if (controlledResults !== undefined) return controlledResultsStale ? NO_RESULTS : controlledResults;
     return open ? (searchItems ?? searchChat)(items, applied) : NO_RESULTS;
-  }, [open, items, applied, controlledResults, searchItems]);
+  }, [open, items, applied, controlledResults, controlledResultsStale, searchItems]);
   const groups = useMemo(() => groupHits(results.hits), [results.hits]);
 
   const [loading, setLoading] = useState(false);

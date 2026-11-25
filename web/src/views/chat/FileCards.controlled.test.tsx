@@ -143,6 +143,55 @@ describe("controlled file cards", () => {
     act(() => button("/w/log.txt").click());
     expect(mocks.openPanel).toHaveBeenCalledWith({ kind: "file", mid: "m1", path: "/w/log.txt", cwd: "/panel" });
   });
+
+  it("retries a document thumbnail after its manager, cwd or resolver changes", async () => {
+    const file: AttachedFile = { kind: "file", path: "/w/report.docx", name: "report.docx" };
+    const first = vi.fn(() => "thumb:first");
+    const second = vi.fn(() => "thumb:second");
+    await mount(<DocumentCards files={[file]} mid="m1" cwd="/one" resolveThumbURL={first} />);
+    act(() => host.querySelector("img")!.dispatchEvent(new Event("error")));
+    expect(host.querySelector("img")).toBeNull();
+
+    await mount(<DocumentCards files={[file]} mid="m1" cwd="/one" resolveThumbURL={second} />);
+    expect(host.querySelector<HTMLImageElement>("img")?.getAttribute("src")).toBe("thumb:second");
+
+    const third = vi.fn(() => "thumb:third");
+    await mount(<DocumentCards files={[file]} mid="m2" cwd="/two" resolveThumbURL={third} />);
+    expect(host.querySelector<HTMLImageElement>("img")?.getAttribute("src")).toBe("thumb:third");
+  });
+
+  it("retries failed media and clears the previous duration when the resource scope changes", async () => {
+    const file: AttachedFile = { kind: "video", path: "/w/video.mp4", name: "video.mp4", duration: 10 };
+    const first = vi.fn((path: string, options: { inline?: boolean }) => `download:first:${path}:${options.inline ? "inline" : "attachment"}`);
+    const second = vi.fn((path: string, options: { inline?: boolean }) => `download:second:${path}:${options.inline ? "inline" : "attachment"}`);
+    await mount(<FileCards files={[file]} mid="m1" cwd="/one" resolveDownloadURL={first} />);
+    const video = host.querySelector("video")!;
+    Object.defineProperty(video, "duration", { configurable: true, value: 65 });
+    act(() => video.dispatchEvent(new Event("loadedmetadata")));
+    expect(host.textContent).toContain("1:05");
+
+    act(() => host.querySelector("video")!.dispatchEvent(new Event("error")));
+    expect(host.querySelector("video")).toBeNull();
+    expect(host.querySelector("a[download]")?.getAttribute("href")).toContain("attachment");
+
+    await mount(<FileCards files={[file]} mid="m1" cwd="/one" resolveDownloadURL={second} />);
+    expect(host.querySelector("video")?.getAttribute("src")).toBe("download:second:/w/video.mp4:inline");
+    expect(host.textContent).toContain("0:10");
+    expect(host.textContent).not.toContain("1:05");
+  });
+
+  it("draws a controlled reply file when its path stat arrives after the first render", async () => {
+    const text = "Wrote `/w/报告.docx`.";
+    let stat: PathStat | undefined;
+    const resolvePathStat = vi.fn(() => stat);
+    const resolveThumbURL = vi.fn(() => "thumb:report");
+    await mount(<ReplyFiles text={text} mid="m1" cwd="/w" resolvePathStat={resolvePathStat} resolveThumbURL={resolveThumbURL} />);
+    expect(host.querySelector('[data-testid="document-card"]')).toBeNull();
+
+    stat = { kind: "file", size: 2048 };
+    await mount(<ReplyFiles text={text} mid="m1" cwd="/w" resolvePathStat={resolvePathStat} resolveThumbURL={resolveThumbURL} />);
+    expect(host.querySelector('[data-testid="document-card"]')).not.toBeNull();
+  });
 });
 
 describe("default file card compatibility", () => {

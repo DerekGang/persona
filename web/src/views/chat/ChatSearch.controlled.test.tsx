@@ -79,6 +79,26 @@ describe("ChatSearch with controlled results and matching", () => {
     expect(onPick).toHaveBeenCalledWith(hit);
   });
 
+  it("invalidates old controlled results while a new query is pending", async () => {
+    const onPick = vi.fn();
+    await mount(base({ query: "parser", results: found, onPick }));
+    expect(document.querySelectorAll("[data-search-result]")).toHaveLength(1);
+
+    // The query moved, but the parent has not supplied a new result object yet: the old hit is neither drawn nor
+    // accepted by Enter.
+    await mount(base({ query: "next", results: found, onPick }));
+    expect(document.body.textContent).not.toContain("the parser is fixed");
+    expect(document.querySelectorAll("[data-search-result]")).toHaveLength(0);
+    const input = document.querySelector<HTMLInputElement>("input")!;
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onPick).not.toHaveBeenCalled();
+
+    const empty: ChatSearchResults = { hits: [], truncated: false };
+    await mount(base({ query: "next", results: empty, onPick }));
+    expect(document.body.textContent).toContain(t("chat-chatsearch.no_hits"));
+    expect(document.body.textContent).not.toContain(t("chat-chatsearch.enter_keyword"));
+  });
+
   it("uses a custom matcher after the configured settle time, not the default matcher", async () => {
     vi.useFakeTimers();
     const searchItems = vi.fn(() => found);

@@ -1,7 +1,7 @@
 // Video and audio from a machine (docs/web/web.md "Media", #1422): played straight from file/download, which the browser
 // reads by Range, so seeking never waits for the whole file. A codec this browser lacks (HEVC outside Safari, most
 // .mkv) says so and offers the download instead of a black box.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fileDownloadURL } from "../lib/api";
 import { cx } from "./atoms";
 import { t } from "../i18n";
@@ -31,6 +31,7 @@ export function MediaPlayer({
   resolveDownloadURL?: (path: string, options: { inline?: boolean }) => string;
 }) {
   const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [mid, path, cwd, kind, resolveDownloadURL]);
   const downloadURL = (options: { inline?: boolean }) => resolveDownloadURL ? resolveDownloadURL(path, options) : fileDownloadURL(mid, path, cwd, options);
   const src = downloadURL({ inline: true });
   const reportDuration = (d: number) => {
