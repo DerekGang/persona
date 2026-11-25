@@ -192,12 +192,23 @@ describe("the assistant's live text", () => {
   });
 
   it("keeps a preview with a late echo until the next input really arrives", async () => {
+    items([said(6, "The prior turn has an answer.")], 5);
     await delta("The turn is answering.");
-    items([{ ...prompt, id: "u6", seq: 6 }], 5);
+    items([{ ...prompt, id: "u7#0", seq: 7 }], 6);
+    expect(tr.streaming).toBe("The turn is answering.");
+    items([{ ...prompt, id: "u7#1", seq: 8, kind: "image" }], 7);
     expect(tr.streaming).toBe("The turn is answering.");
     await delta("");
-    expect(tr.streamEndedThrough).toBe(6);
-    items([{ ...prompt, id: "u7", seq: 7, kind: "image" }], 6);
+    expect(tr.streamEndedThrough).toBe(8);
+    items([{ ...prompt, id: "u9", seq: 9, kind: "image" }], 8);
+    expect(tr.streaming).toBe("");
+    expect(tr.streamEndedThrough).toBeUndefined();
+  });
+
+  it("drops an already bound reply before an old end marker can attach to the next input", async () => {
+    await delta("The reply to the already echoed input.");
+    items([{ ...prompt, id: "u6", seq: 6 }], 5);
+    await delta("");
     expect(tr.streaming).toBe("");
     expect(tr.streamEndedThrough).toBeUndefined();
   });

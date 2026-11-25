@@ -75,6 +75,8 @@ export function turnStart(seg: Pick<Segment, "user" | "start"> | undefined): str
 
 /** How long a message of yours, the newest thing in the chat, counts as the start of a turn the hub has not reported yet. */
 export const AWAIT_MS = 60_000;
+/** Give the status stream time to catch up before reporting an empty echoed turn. */
+export const RETRY_IDLE_GRACE_MS = 2_000;
 
 /**
  * A message of yours is the newest thing and nothing has answered it, while the session's state still says it is not

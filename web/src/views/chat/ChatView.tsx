@@ -73,7 +73,7 @@ import { COMPOSER_INPUT, lostWith } from "../../lib/dock-focus";
 import { FailureNote, showsFailureNote } from "./FailureNote";
 import { LazyCloseoutCard } from "./closeout-chunks";
 import { shownCloseout } from "../../lib/closeout";
-import { AWAIT_MS, awaitingTurn, COMMAND_DOCK_MAX, DOCK_MAX, turnStart } from "./dock";
+import { AWAIT_MS, awaitingTurn, COMMAND_DOCK_MAX, DOCK_MAX, RETRY_IDLE_GRACE_MS, turnStart } from "./dock";
 const ChatEmptyState = lazyPage(() => import("./ChatEmptyState").then((m) => m.ChatEmptyState));
 import { HEADER_SLOT, HEADER_SLOT_END, HEADER_SLOT_START } from "./header";
 import { AgentModelPill, AssistantModelPill, useAssistantTurnFix } from "./ModelPill";
@@ -559,33 +559,35 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const pickupState = state === "working" && session?.background_working ? "idle" : state;
   const inputKey = lastSeg?.user ? `${mid}/${sid}/${lastSeg.user.id}` : undefined;
   const hubStateAt = Date.parse(session?.state_since ?? "");
-  const observedInput = useRef<{ key: string; stateSince: number } | undefined>(undefined);
-  const settled = pickupState === state && observedInput.current?.key === inputKey &&
-    hubStateAt > (observedInput.current?.stateSince ?? NaN);
+  const [observedInput, setObservedInput] = useState<{ key: string; hubStateAt: number; seenAt: number }>();
+  const observedKey = observedInput?.key;
   useLayoutEffect(() => {
-    // Only compare status updates from the hub after observing this echo. The Node's input timestamp
-    // cannot tell whether the hub's already visible idle state belongs to the same turn.
-    if (!inputKey) observedInput.current = undefined;
-    else if (observedInput.current?.key !== inputKey || Number.isNaN(observedInput.current.stateSince)) {
-      observedInput.current = { key: inputKey, stateSince: hubStateAt };
+    if (inputKey !== observedKey) {
+      setObservedInput(inputKey ? { key: inputKey, hubStateAt, seenAt: Date.now() } : undefined);
     }
-  }, [inputKey, hubStateAt]);
+  }, [inputKey, hubStateAt, observedKey]);
+  // The hub can deliver its idle update with the echo or just after it. Wait for it to stay idle
+  // through the handoff before offering a retry, since the input and status come from separate streams.
+  const idleAt = observedInput && observedKey === inputKey && !tr.streaming && (state === "idle" || state === "unread") &&
+    (hubStateAt > observedInput.hubStateAt || hubStateAt > Date.parse(lastSeg?.user?.ts ?? ""))
+    ? observedInput.seenAt + RETRY_IDLE_GRACE_MS : undefined;
+  const settled = idleAt !== undefined && awaitNow >= idleAt;
   const awaitedTurn = awaitingTurn(lastSeg, pickupState, awaitNow, turnFailure, settled) ? lastSeg?.user?.id : undefined;
   const awaiting = awaitedTurn !== undefined && awaitedTurn !== stoppedTurn && !streamEnded;
   const awaitingNow = useRef<string | undefined>(undefined);
   awaitingNow.current = awaiting ? awaitedTurn : undefined;
   const waitStart = awaitedTurn ? lastSeg?.user?.ts : undefined;
+  const waitUntil = Math.min(Date.parse(waitStart ?? "") + AWAIT_MS, idleAt ?? Infinity);
   useEffect(() => {
     // draw again when the wait runs out, so a message nobody picks up stops looking worked on; once something answers
     // it there is nothing to wait for (and no clock to reset on every streamed item)
-    const at = waitStart ? Date.parse(waitStart) : NaN;
-    if (Number.isNaN(at)) return;
+    if (Number.isNaN(waitUntil)) return;
     setAwaitNow(Date.now());
-    const left = at + AWAIT_MS - Date.now();
+    const left = waitUntil - Date.now();
     if (left <= 0) return;
     const timer = window.setTimeout(() => setAwaitNow(Date.now()), left + 10);
     return () => clearTimeout(timer);
-  }, [waitStart]);
+  }, [waitUntil]);
   const stopped = Boolean(stoppedTurn && stoppedTurn === lastSeg?.user?.id);
   const canShowPreview = state !== "offline" && state !== "needs_you" && !stopped && !turnFailure;
   const streaming = Boolean(replyPreview) && !streamEnded && (state === "working" || canShowPreview);

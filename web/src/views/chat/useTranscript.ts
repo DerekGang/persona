@@ -5,7 +5,7 @@ import { api, ApiError, errorText, isAbort, READ_TIMEOUT_MS, sessionHistoryNotFo
 import { sessionLoadError } from "../../lib/session-link";
 import { getState, listenSession, markConversationDeleted, send, type ItemsEvent } from "../../lib/store";
 import { afterPull, afterPush, FRESH_TALLY, newestItemAt, notLive as tallyNotLive, RevWatch, shouldPull, type StaleTally } from "../../lib/stale-page";
-import { isUserInput, mergeItems, withoutFolded } from "../../lib/turns";
+import { insideFold, isUserInput, mergeItems, withoutFolded } from "../../lib/turns";
 import { chosenManager } from "../../lib/manager-choice";
 import { discardFeedCache, discardMemoryPage, feedCacheScope, readFeedCache, readMemoryPage, writeFeedCache, writeMemoryPage, type FeedCache } from "../../lib/feed-cache";
 import type { Item, ItemsPage } from "../../lib/types";
@@ -354,12 +354,15 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       setStreamEndedThrough(undefined);
     };
     const showLive = (batch?: Item[]) => {
-      // The echo can arrive after its first delta. Only a completed preview belongs to an earlier
-      // turn when a new input advances past the preview's last known transcript boundary.
+      // A preview without an input can claim a late echo. Once bound, the next input supersedes it,
+      // even when the previous turn's end marker has not arrived yet.
       const input = liveRaw.current && batch?.findLast((i) => i.seq > liveThrough && !i.queued && isUserInput(i));
       if (input) {
-        if (handoffTimer !== undefined && liveThrough) return endLive();
+        const message = input.id.split("#")[0];
+        if (message !== liveInput && (liveInput !== undefined || handoffTimer !== undefined)) return endLive();
+        liveInput = message;
         liveThrough = input.seq;
+        if (handoffTimer !== undefined) setStreamEndedThrough(liveThrough);
       }
       if (assistant) {
         if (batch?.some((i) => i.role === "assistant" && i.kind === "text" && i.seq >= liveThrough)) endLive();
@@ -373,6 +376,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       else deltas.current.push(want);
     };
     let liveThrough = 0;
+    let liveInput: string | undefined;
     const onDelta = (text: string) => {
       if (dead) return;
       if (replacing.current) {
@@ -388,10 +392,15 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
         handoffTimer = window.setTimeout(endLive, READ_TIMEOUT_MS);
         return;
       }
+      if (!liveRaw.current || handoffTimer !== undefined) {
+        liveThrough = Math.max(covered.current, latest.at(-1)?.seq ?? 0);
+        const boundary = latest.findLast((item) => !item.queued &&
+          (isUserInput(item) || (item.role === "assistant" && item.kind === "text")));
+        liveInput = boundary && isUserInput(boundary) ? boundary.id.split("#")[0] : undefined;
+      }
       clearTimeout(handoffTimer);
       handoffTimer = undefined;
       setStreamEndedThrough(undefined);
-      liveThrough = Math.max(covered.current, latest.at(-1)?.seq ?? 0);
       liveRaw.current = text;
       if (assistant) {
         liveShown.current = text;
@@ -736,7 +745,8 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
         from = batch[batch.length - 1].seq + 1;
       }
       if (complete) expanded.current.set(fold.id, fold.fold);
-      apply(out);
+      // from_seq..through_seq is line-granular, so boundary lines can carry blocks of an adjacent fold (#13859).
+      apply(out.filter((i) => insideFold(i, fold)));
       // The closeout's evidence reader needs to know a capped or superseded read; existing fold UI keeps the partial steps.
       return complete;
     },
