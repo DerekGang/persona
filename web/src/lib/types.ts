@@ -930,6 +930,8 @@ export interface Interaction {
   kind: "question" | "plan" | "permission" | "screen" | "elicitation";
   created_at?: string;
   expires_at?: string;
+  seen_at?: string;
+  seen_ttl_seconds?: number;
   tool_name?: string;
   /** The transcript call that raised this card, when its runtime supplies one. */
   tool_use_id?: string;
