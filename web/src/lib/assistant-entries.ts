@@ -6,6 +6,7 @@ import { finishedAt, hubNeedsYou, JUST_DONE_MS, openByView, supersededFailedStar
 import { awaitsReview, dockAgents, heldDelivery, heldForSupervisor, makeSessionLookup, openAsk, todoRank, todoStatus, withInteractionLookup, type SessionLookup, type Todo, type TodoStatus } from "./todos";
 import { byTime } from "./times";
 import { homeKey } from "./folded-rows";
+import { requestHome } from "./child-sessions";
 import type { Interaction, Session } from "./types";
 
 /**
@@ -133,14 +134,7 @@ export function decisionLaterKey(todo: Todo): string {
 }
 
 /** A request's task home is shared by Needs you and the decision pager. */
-export function taskRequestRouting(todos: readonly Todo[], interactions: readonly Interaction[], lookup: SessionLookup) {
-  const asksOf = new Map<string, Interaction[]>();
-  for (const ix of [...interactions].sort((a, b) => byTime(a.created_at, b.created_at) || a.id.localeCompare(b.id))) {
-    // a child session's card is asked under its parent (#5120): the parent's task or Agent row holds it
-    const k = homeKey(ix);
-    asksOf.set(k, [...(asksOf.get(k) ?? []), ix]);
-  }
-
+export function taskRequestRouting(todos: readonly Todo[], interactions: readonly Interaction[], lookup: SessionLookup, conversation: string) {
   const activeAgents = (todo: Todo) => (todo.done_at ? [] : (todo.agents ?? []).filter((a) => !a.released_at));
   const homeAgents = (todo: Todo) => (todo.done_at ? [] : (todo.agents ?? []).filter((a) => !a.released_at || parkInteractionID(todo)));
   // One home per request (docs/design/DESIGN_SYSTEM.md 4.8): an Agent several of these tasks list asks under one of them,
@@ -159,6 +153,15 @@ export function taskRequestRouting(todos: readonly Todo[], interactions: readonl
     const tied = lookup(mid, sid)?.todo?.id;
     return tied && ids?.includes(tied) ? tied : ids?.[0];
   };
+  const asksOf = new Map<string, Interaction[]>();
+  for (const ix of [...interactions].sort((a, b) => byTime(a.created_at, b.created_at) || a.id.localeCompare(b.id))) {
+    // Child requests follow their parent Agent. A task Agent's own request can fold directly under
+    // the supervising conversation and still belongs to the task that lists that Agent.
+    const home = homeKey(ix);
+    const origin = sessionKey(ix.machine_id, ix.session_id);
+    const key = !listing.has(home) && requestHome(ix) === conversation && listing.has(origin) ? origin : home;
+    asksOf.set(key, [...(asksOf.get(key) ?? []), ix]);
+  }
   function requestsFor(sourceTodo: Todo) {
     const candidate = linkedParkInteraction(sourceTodo, interactions);
     const linkedHome = candidate ? homeOf(candidate.machine_id, candidate.session_id) : undefined;
@@ -197,7 +200,7 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
   const { asksOf, requestsFor } = taskRequestRouting(slots.flatMap((card) => {
     const todo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
     return todo ? [todo] : [];
-  }), interactions, lookup);
+  }), interactions, lookup, conversation);
   for (const card of slots) {
     const sourceTodo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
     // a plan task with no to-do yet is its plan's row (below); a to-do the hub no longer sends is finished

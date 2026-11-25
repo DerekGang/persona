@@ -64,6 +64,10 @@ describe("assistant decisions", () => {
       interactions: [child, held], lookup, feed: [], plans: {} };
     expect(taskDecisionCards(input)).toEqual([{ interaction: child, taskTitle: tied.title }]);
     expect(taskDecisionCards({ ...input, main: "assistant", todos: [first, { ...tied, origin: "other-assistant" }] })).toEqual([]);
+    const foldedIntoAssistant = question("task-agent", { manager: "local", folded_under: "assistant" });
+    expect(taskDecisionCards({ ...input, interactions: [foldedIntoAssistant] })).toEqual([
+      { interaction: foldedIntoAssistant, taskTitle: tied.title },
+    ]);
   });
 
   it("keeps terminal requests and approvals in their existing answer channels", () => {

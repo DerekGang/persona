@@ -23,7 +23,7 @@ export function taskDecisionCards(input: TaskDecisionInput): DecisionCard[] {
     const todo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
     return todo ? [todo] : [];
   });
-  const { requestsFor } = taskRequestRouting(orderedTasks, interactions, lookup);
+  const { requestsFor } = taskRequestRouting(orderedTasks, interactions, lookup, conversation);
   return orderedTasks.flatMap((todo) => todo.origin === conversation
     ? requestsFor(todo).asks.map((interaction) => ({ interaction, taskTitle: todo.title }))
     : []);
