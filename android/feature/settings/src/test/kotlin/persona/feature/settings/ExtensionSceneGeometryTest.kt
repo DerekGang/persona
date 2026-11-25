@@ -44,8 +44,48 @@ class ExtensionSceneGeometryTest {
         val forward = requireNotNull(SceneMesh.from(listOf(prism)))
         val reversed = requireNotNull(SceneMesh.from(listOf(prism.copy(points = outline.reversed()))))
         assertEquals(forward.vertices, reversed.vertices)
-        assertEquals(6, forward.faces.single { it.normal.z == 1.0 }.vertices.size)
+        // The concave cap is ear-clipped into (n-2)=4 upward triangles rather than one 6-vertex n-gon.
+        val topCaps = forward.faces.filter { it.normal.z == 1.0 }
+        assertEquals(4, topCaps.size)
+        assertTrue(topCaps.all { it.vertices.size == 3 })
         assertEquals(SceneVector(0.0, -1.0, 0.0), forward.faces.first { it.normal.y == -1.0 }.normal)
+    }
+
+    @Test fun earClipperTriangulatesConcaveAndConvexPolygons() {
+        val lShape = listOf(
+            ScenePoint(0.0, 0.0), ScenePoint(2.0, 0.0), ScenePoint(2.0, 1.0),
+            ScenePoint(1.0, 1.0), ScenePoint(1.0, 2.0), ScenePoint(0.0, 2.0),
+        )
+        val triangles = triangulateSimplePolygon(lShape)
+        assertEquals(4, triangles.size)
+        // Every original perimeter edge must be represented by at least one triangle edge.
+        val edges = triangles.flatMap { (a, b, c) -> listOf(setOf(a, b), setOf(b, c), setOf(c, a)) }.toSet()
+        for (i in lShape.indices) assertTrue(edges.contains(setOf(i, (i + 1) % lShape.size)))
+        // A convex quad yields exactly two triangles.
+        assertEquals(2, triangulateSimplePolygon(listOf(
+            ScenePoint(-1.0, -1.0), ScenePoint(1.0, -1.0), ScenePoint(1.0, 1.0), ScenePoint(-1.0, 1.0))).size)
+    }
+
+    @Test fun negligibleRoundsStaySquareButVisibleRoundsAddVertices() {
+        val square = requireNotNull(SceneMesh.from(listOf(box)))
+        val tinyRound = requireNotNull(SceneMesh.from(listOf(box.copy(round = 0.001))))
+        // At or below the 0.002 m cutoff the footprint stays four corners (8 top+bottom vertices).
+        assertEquals(8, square.vertices.size)
+        assertEquals(square.vertices.size, tinyRound.vertices.size)
+        val visibleRound = requireNotNull(SceneMesh.from(listOf(box.copy(round = 0.3))))
+        assertTrue(visibleRound.vertices.size > square.vertices.size)
+    }
+
+    @Test fun seamsAnchorToTheFaceBoundsInsteadOfWorldZero() {
+        assertEquals(listOf(0.5, 1.0), repeatedSeams(0.0, 1.0, 0.5).toList())
+        // Translating the face far from the origin preserves the same local pattern.
+        assertEquals(listOf(100.5, 101.0), repeatedSeams(100.0, 101.0, 0.5).toList())
+        // A narrow face with a fine spacing keeps every seam inside its own bounds.
+        val narrow = repeatedSeams(4.0, 4.2, 0.05).toList()
+        assertTrue(narrow.isNotEmpty() && narrow.all { it > 4.0 && it <= 4.2 + 1e-9 })
+        // A spacing larger than the span yields no seam deterministically rather than snapping to world zero.
+        assertTrue(repeatedSeams(4.0, 4.2, 8.0).none { it <= 4.0 || it > 4.2 + 1e-9 })
+        assertEquals(emptyList<Double>(), repeatedSeams(2.0, 2.0, 0.5).toList())
     }
 
     @Test fun topDownFitUsesJustShapeBoundsAndZoomKeepsTheCenter() {

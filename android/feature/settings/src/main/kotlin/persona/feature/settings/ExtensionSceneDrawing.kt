@@ -105,8 +105,12 @@ private fun DrawScope.drawSurfacePattern(
     }
 }
 
-private fun repeatedSeams(minimum: Double, maximum: Double, spacing: Double): Sequence<Double> {
-    val step = spacing.coerceAtLeast((maximum - minimum) / 64)
-    val first = ceil(minimum / step) * step
-    return generateSequence(first) { it + step }.take(64).takeWhile { it <= maximum }
+internal fun repeatedSeams(minimum: Double, maximum: Double, spacing: Double): Sequence<Double> {
+    val span = maximum - minimum
+    if (!span.isFinite() || span <= 0.0) return emptySequence()
+    val step = spacing.coerceAtLeast(span / 64)
+    // Anchor to this face's own minimum rather than world zero: separate floor prisms with one material then keep a
+    // shape-local pattern, and a shape narrower than the fixed step still receives seams (review P2).
+    val first = minimum + step
+    return generateSequence(first) { it + step }.take(64).takeWhile { it <= maximum + 1e-9 }
 }

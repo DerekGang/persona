@@ -12,6 +12,9 @@ import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
 
+/** Rounded corners at or below this radius render square, matching the iOS geometry's negligible-radius cutoff. */
+private const val NEGLIGIBLE_ROUND_METERS = 0.002
+
 internal data class ScenePoint(val x: Double, val y: Double) {
     fun atHeight(height: Double) = SceneVector(x, y, height)
 
@@ -140,8 +143,13 @@ private data class SceneSolid(
             val center = SceneVector(points.map { it.x }.average(), points.map { it.y }.average(), points.map { it.z }.average())
             faces += SceneFace(indices, center, normal, color, material)
         }
-        add((first until first + count).reversed().toList(), SceneVector(0.0, 0.0, -1.0))
-        add((first + count until first + 2 * count).toList(), SceneVector(0.0, 0.0, 1.0))
+        // Triangulate simple (possibly concave) caps instead of emitting one perimeter n-gon: the renderer fills each
+        // triangle exactly, so an L/U-shaped prism keeps its notch rather than letting the closing chord fill it (P2).
+        val triangles = triangulateSimplePolygon(footprint)
+        for ((a, b, c) in triangles) {
+            add(listOf(first + c, first + b, first + a), SceneVector(0.0, 0.0, -1.0))
+            add(listOf(first + count + a, first + count + b, first + count + c), SceneVector(0.0, 0.0, 1.0))
+        }
         for (i in footprint.indices) {
             val j = (i + 1) % count
             val dx = footprint[j].x - footprint[i].x
@@ -182,7 +190,10 @@ private data class SceneSolid(
             val x = size.x / 2
             val y = size.y / 2
             val corners = listOf(ScenePoint(-x, -y), ScenePoint(x, -y), ScenePoint(x, y), ScenePoint(-x, y))
-            val radius = (shape.round?.takeIf(Double::isFinite) ?: 0.0).coerceIn(0.0, min(x, y))
+            // A sub-millimetre/2 mm radius (e.g. 0.01 m on an 8.12 x 0.12 m wall) is visually square; rounding it
+            // still replaces four corners with twenty near-coincident vertices and up to 18 side faces per box.
+            val rawRadius = (shape.round?.takeIf(Double::isFinite) ?: 0.0).coerceIn(0.0, min(x, y))
+            val radius = if (rawRadius <= NEGLIGIBLE_ROUND_METERS) 0.0 else rawRadius
             val outline = if (radius == 0.0) corners else corners.flatMapIndexed { i, corner ->
                 val cx = if (corner.x < 0) corner.x + radius else corner.x - radius
                 val cy = if (corner.y < 0) corner.y + radius else corner.y - radius
@@ -220,3 +231,55 @@ private data class SceneSolid(
 }
 
 private fun Double.radians() = this * PI / 180
+
+/**
+ * Ear-clipping triangulation of a simple polygon. The footprint is normalized counter-clockwise by [SceneSolid.from];
+ * returns original-index triples in CCW order. Degenerate inputs fall back to a single fan so callers always get caps.
+ */
+internal fun triangulateSimplePolygon(points: List<ScenePoint>): List<Triple<Int, Int, Int>> {
+    val n = points.size
+    if (n < 3) return emptyList()
+    if (n == 3) return listOf(Triple(0, 1, 2))
+    val order = ArrayDeque<Int>().apply { addAll(points.indices) }
+    val triangles = mutableListOf<Triple<Int, Int, Int>>()
+    var guard = 0
+    val maxSteps = n * n + 16
+    while (order.size > 3 && guard++ < maxSteps) {
+        var earIndex = -1
+        val m = order.size
+        for (k in 0 until m) {
+            val prev = order[(k - 1 + m) % m]
+            val cur = order[k]
+            val next = order[(k + 1) % m]
+            val a = points[prev]; val b = points[cur]; val c = points[next]
+            if (cross(a, b, c) <= 1e-10) continue // reflex or degenerate vertex for a CCW polygon
+            val containsOther = order.any { idx ->
+                idx != prev && idx != cur && idx != next && pointInTriangle(points[idx], a, b, c)
+            }
+            if (!containsOther) { earIndex = k; break }
+        }
+        if (earIndex < 0) {
+            // Defensive fan fallback for near-degenerate/self-touching outlines rather than dropping the cap.
+            return (1 until n - 1).map { Triple(0, it, it + 1) }
+        }
+        val mNow = order.size
+        val prev = order[(earIndex - 1 + mNow) % mNow]
+        val cur = order[earIndex]
+        val next = order[(earIndex + 1) % mNow]
+        triangles += Triple(prev, cur, next)
+        order.removeAt(earIndex)
+    }
+    if (order.size == 3) triangles += Triple(order[0], order[1], order[2])
+    return triangles
+}
+
+private fun cross(a: ScenePoint, b: ScenePoint, c: ScenePoint): Double =
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+private fun pointInTriangle(p: ScenePoint, a: ScenePoint, b: ScenePoint, c: ScenePoint): Boolean {
+    val c1 = cross(a, b, p)
+    val c2 = cross(b, c, p)
+    val c3 = cross(c, a, p)
+    val eps = 1e-9
+    return c1 >= -eps && c2 >= -eps && c3 >= -eps
+}
