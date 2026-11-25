@@ -43,13 +43,12 @@ type codexConn struct {
 	// (assistantLarkEnvNamed). nil when the id was known at the start.
 	nameGates func(id string)
 
-	mu      sync.Mutex
-	pending map[int64]chan codexReply
-	asks    map[string]context.CancelFunc // server request id → the phone question waiting for it
-	turnID  string                        // the turn running, "" when idle
-	// completedTurn is the last turn turn/completed ended: its late turn/started or start response must not revive it.
-	completedTurn       string
-	files               map[string][]string // fileChange item id → paths, for the approval card
+	mu                  sync.Mutex
+	pending             map[int64]chan codexReply
+	asks                map[string]context.CancelFunc // server request id → the phone question waiting for it
+	turnID              string                        // the turn running, "" when idle
+	endedTurnID         string                        // the turn that already completed; its late started is not a new turn
+	files               map[string][]string           // fileChange item id → paths, for the approval card
 	closed              bool
 	threadID            string
 	speedModel          string

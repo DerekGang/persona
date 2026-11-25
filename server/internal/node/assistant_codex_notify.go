@@ -116,13 +116,15 @@ func (c *codexConn) notification(method string, params json.RawMessage) {
 		n.notifyCodex()
 	case "turn/started":
 		c.mu.Lock()
-		if ev.Turn.ID != "" && ev.Turn.ID == c.completedTurn {
-			c.mu.Unlock()
-			return
+		ended := ev.Turn.ID != "" && c.endedTurnID == ev.Turn.ID
+		if !ended {
+			c.turnID = ev.Turn.ID
+			c.loop = codexCompactionLoop{}
 		}
-		c.turnID = ev.Turn.ID
-		c.loop = codexCompactionLoop{}
 		c.mu.Unlock()
+		if ended {
+			return // a duplicate notification after turn/completed cannot make the same turn active again
+		}
 		n.ttft.armIfUnarmed(p.id, time.Now(), ev.Turn.ID)
 		p.mu.Lock()
 		had := p.partial.Len() > 0
@@ -198,7 +200,7 @@ func (c *codexConn) notification(method string, params json.RawMessage) {
 		n.ttft.clearPending(p.id)
 		c.mu.Lock()
 		if ev.Turn.ID != "" {
-			c.completedTurn = ev.Turn.ID
+			c.endedTurnID = ev.Turn.ID
 		}
 		if c.turnID == ev.Turn.ID {
 			c.turnID = ""
