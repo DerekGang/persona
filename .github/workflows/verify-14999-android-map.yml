@@ -1,7 +1,7 @@
 name: Verify Android maps and chat tool views
 on:
   push:
-    branches: ['verify/14999-android-map-v12']
+    branches: ['verify/14999-android-map-pr-review']
 permissions:
   contents: read
 jobs:
