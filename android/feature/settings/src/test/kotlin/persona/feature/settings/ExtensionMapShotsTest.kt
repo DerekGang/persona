@@ -14,6 +14,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -29,7 +30,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import persona.core.contracts.api.ExtensionViewAction
 import persona.core.contracts.api.ExtensionViewItem
+import persona.core.contracts.generated.ExtensionAction
 import persona.core.contracts.generated.ExtensionMapCoordinate
 import persona.core.contracts.generated.ExtensionMapLink
 import persona.core.contracts.generated.ExtensionMapMarker
@@ -96,5 +99,36 @@ class ExtensionMapShotsTest {
         }
         scenic.assertIsSelected()
         assertTrue(opened.isEmpty())
+    }
+
+    @Test fun fullScreenClosesBeforeDispatchingConfirmationAndLinks() {
+        val item = ExtensionViewItem(type = "map", title = "Harbour route", alt = "Harbour map", showList = true,
+            markers = listOf(
+                ExtensionMapMarker("origin", 24.45, 118.06, label = "Harbour"),
+                ExtensionMapMarker("stop", 24.46, 118.08, label = "Park",
+                    action = ExtensionAction(id = "visit", confirm = "Visit the park?")),
+            ),
+            links = listOf(ExtensionMapLink("Open route", "https://example.com/route")),
+        )
+        var pressed: ExtensionViewAction? = null
+        var opened: String? = null
+        val handle = ExtensionViewHandle({ _, action -> pressed = action }, { _, _ -> }, {}, { opened = it })
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true) {
+                ExtensionMap(item, ExtensionViewState(), handle)
+            }
+        }
+        val cover = hasTestTag("extension-map-full-screen")
+        rule.onNodeWithTag("extension-map-canvas").performClick()
+        rule.onNode(hasText("Park") and hasAnyAncestor(cover)).performScrollTo().performClick()
+        rule.onNode(cover).assertDoesNotExist()
+        rule.runOnIdle {
+            assertEquals("visit", pressed?.id)
+            assertEquals("Visit the park?", pressed?.confirm)
+        }
+        rule.onNodeWithTag("extension-map-canvas").performClick()
+        rule.onNode(hasText("Open route") and hasAnyAncestor(cover)).performScrollTo().performClick()
+        rule.onNode(cover).assertDoesNotExist()
+        rule.runOnIdle { assertEquals("https://example.com/route", opened) }
     }
 }

@@ -176,8 +176,8 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
                     MapRoutes(routes, routeID, staticMap = false) { chosenRouteID = it }
                 }
                 val stops = if (item.showList == false) markers.filter { it.id == stopID } else markers
-                MapStops(item, stops, stopID, state, handle, staticMap = false) { stopID = it }
-                MapLinks(item, handle)
+                MapStops(item, stops, stopID, state, handle, staticMap = false, beforeNavigation = close) { stopID = it }
+                MapLinks(item, handle, beforeOpen = close)
             }
         }
     }
@@ -245,20 +245,32 @@ private fun MapRoutes(routes: List<ExtensionMapRoute>, routeID: String?, staticM
 
 @Composable
 private fun MapStops(item: ExtensionViewItem, markers: List<ExtensionMapMarker>, stopID: String?, state: ExtensionViewState,
-                     handle: ExtensionViewHandle, staticMap: Boolean, selectStop: (String) -> Unit) {
+                     handle: ExtensionViewHandle, staticMap: Boolean, beforeNavigation: (() -> Unit)? = null,
+                     selectStop: (String) -> Unit) {
     for (marker in markers) {
         val action = marker.action?.toViewAction()
         JRow(marker.label, subtitle = if (marker.id == stopID) marker.detail ?: marker.subtitle else marker.subtitle,
             leadingIcon = marker.icon?.takeIf { it.isNotBlank() }?.let(ExtensionIcons::of),
             selected = marker.id == stopID, enabled = !state.busy,
-            onClick = if (staticMap) null else ({ selectStop(marker.id); action?.let { handle.press(item, it) } }))
+            onClick = if (staticMap) null else ({
+                selectStop(marker.id)
+                action?.let {
+                    if (!it.confirm.isNullOrBlank() || it.push != null || it.open != null || it.pop) {
+                        beforeNavigation?.invoke()
+                    }
+                    handle.press(item, it)
+                }
+            }))
     }
 }
 
 @Composable
-private fun MapLinks(item: ExtensionViewItem, handle: ExtensionViewHandle) {
+private fun MapLinks(item: ExtensionViewItem, handle: ExtensionViewHandle, beforeOpen: (() -> Unit)? = null) {
     for (link in item.links.orEmpty()) {
         val url = mapExternalLink(link.url) ?: continue
-        if (link.title.isNotBlank()) JRow(link.title, onClick = { handle.open(url) })
+        if (link.title.isNotBlank()) JRow(link.title, onClick = {
+            beforeOpen?.invoke()
+            handle.open(url)
+        })
     }
 }
