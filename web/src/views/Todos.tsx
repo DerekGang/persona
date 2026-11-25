@@ -2,6 +2,7 @@ import { decisionSourceLabel } from "../lib/todo-decision-label";
 import { NewTodoRepositoryBindings, TodoRepositoryBindings, useRepositoryRequestContext } from "../ui/TaskRepositoryBindingsEditor";
 import { cleanRepositoryDraft, createTodoWithRepositories, repositoryDuplicateLink, validRepositoryDraft, type CreateRepositoryBindings, type RepositoryCatalog } from "../lib/task-repositories";
 import { hasRequestPieces } from "../lib/request-pieces";
+import { ExternalSourcesEntry } from "../features/external-sources/ExternalSourcesEntry";
 import { defaultManager, MANAGER_HEADER, sameManager, useShownManager } from "../lib/manager-choice";
 // Beautiful UI Todos View: left list (sorted by status & created_at), right detail, handover dialog.
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type InputHTMLAttributes, type ReactNode, type RefObject } from "react";
@@ -206,20 +207,36 @@ function boardRoute(id?: string): Route {
   return { name: "todos", view: "board", ...(id ? { id } : {}) };
 }
 
-export function TodosView({
-  selectedId,
-  view,
-  mode: routeMode,
-  date,
-  onToggleSidebar,
-}: {
+type TodosViewProps = {
   selectedId?: string;
   /** The calendar (#2029) or read-only progress board (#12713) rather than the list; calendar mode/day from the address. */
   view?: "calendar" | "board";
   mode?: CalendarMode;
   date?: string;
   onToggleSidebar?: () => void;
-}) {
+  manager?: string;
+};
+
+const DirectionDetail = lazyPage(() => import("../features/external-sources/DirectionDetail").then((m) => m.DirectionDetail), { listed: false });
+
+export function TodosView({ directionId, ...props }: TodosViewProps & { directionId?: string }) {
+  return directionId
+    ? <PageBoundary page="direction-detail">
+        <Suspense fallback={<Loading />}>
+          <DirectionDetail id={directionId} manager={props.manager} onToggleSidebar={props.onToggleSidebar} />
+        </Suspense>
+      </PageBoundary>
+    : <TodoListView {...props} />;
+}
+
+function TodoListView({
+  selectedId,
+  manager: selectedManager,
+  view,
+  mode: routeMode,
+  date,
+  onToggleSidebar,
+}: TodosViewProps) {
   const owner = useSyncExternalStore(subscribeCredentialOwner, credentialOwner, credentialOwner);
   const repositoryManager = useShownManager();
   // with several assistants, the current one's to-dos (docs/assistant/managers.md "Clients"); a link to another assistant's
@@ -227,9 +244,15 @@ export function TodosView({
   const everyTodo = useStore((s) => s.todos);
   const ownTodos = useScoped(everyTodo);
   const todos = useMemo(() => {
+    if (selectedId && selectedManager) {
+      const chosen = everyTodo.find((td) => td.id === selectedId && sameManager(td.manager, selectedManager));
+      if (chosen && ownTodos.includes(chosen)) return ownTodos;
+      const others = ownTodos.filter((td) => td.id !== selectedId);
+      return chosen ? [...others, chosen] : others;
+    }
     const linked = selectedId && !ownTodos.some((x) => x.id === selectedId) ? everyTodo.filter((x) => x.id === selectedId) : [];
     return linked.length ? [...ownTodos, ...linked] : ownTodos;
-  }, [everyTodo, ownTodos, selectedId]);
+  }, [everyTodo, ownTodos, selectedId, selectedManager]);
   const todosLoaded = useStore((s) => s.todosLoaded);
   const todosError = useStore((s) => s.todosError);
   const todosSupported = useStore((s) => s.todosSupported);
@@ -333,6 +356,7 @@ export function TodosView({
   // Direction metadata shared by the direction grouping, batch reorganize, and todos_v2 slim row meta (#14830).
   const directionTree = useDirectionTree();
   const leaderTitles = useStore((s) => s.assistant?.conversations);
+  const directionMenu = useMenu();
   const cachedDirectionNames = useCachedDirectionNames();
   const reorganizeDirections = useMemo(
     () => (todosV2 ? reorganizeDirectionOptions(directionTree, leaderTitles, assistant?.leaders) : []),
@@ -978,6 +1002,14 @@ export function TodosView({
           </div>
         </div>
         <div className="flex items-center gap-2.5">
+          {byDirection && <IconButton icon="target" label={t("external-sources.direction_details")}
+            onClick={directionMenu.open} active={Boolean(directionMenu.anchor)} />}
+          {byDirection && directionMenu.anchor && <Menu anchor={directionMenu.anchor} onClose={directionMenu.close} align="right"
+            items={directionTree.directions.filter((direction) => !direction.secretary).map((direction) => ({
+              key: direction.id,
+              label: direction.name || leaderTitles?.find((row) => row.session_id === direction.id)?.title || t("external-sources.untitled"),
+              onSelect: () => navigate({ name: "todos", direction: direction.id, manager: repositoryManager }),
+            }))} />}
           {todosV2 && (
             <a
               href={settingsHref("labs", null, false)}
@@ -3914,9 +3946,11 @@ function TodoDetail({
 
       <TodoImages todo={todo} owner={owner} />
 
-      <TodoRepositoryBindings key={`${owner}:${todo.manager ?? defaultManager()}:${todo.id}`} manager={todo.manager ?? defaultManager()} owner={owner} todoId={todo.id}
-        prStatus={todo.pr_status} otherPRs={todo.other_prs} legacyPRs={legacyPR ? [legacyPR] : []} version={todo.updated_at} todosV2={todosV2}
-        onRepositoriesCount={todosV2 === true ? setRepositoryCount : undefined} />
+      <ExternalSourcesEntry manager={todo.manager ?? defaultManager()} kind="todo" id={todo.id} title={todo.title}>
+        <TodoRepositoryBindings key={`${owner}:${todo.manager ?? defaultManager()}:${todo.id}`} manager={todo.manager ?? defaultManager()} owner={owner} todoId={todo.id}
+          prStatus={todo.pr_status} otherPRs={todo.other_prs} legacyPRs={legacyPR ? [legacyPR] : []} version={todo.updated_at} todosV2={todosV2}
+          onRepositoriesCount={todosV2 === true ? setRepositoryCount : undefined} />
+      </ExternalSourcesEntry>
       {isWorkGoalV2 && childTodos.length > 0 && (
         <section className="mt-6" data-testid="todo-detail-subtasks">
           <div className="mb-2 text-submeta font-medium tracking-[0.04em] text-ink-3">
