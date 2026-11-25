@@ -388,3 +388,55 @@ func TestProjectRefreshCommitsWhenSourceURLIsRecorded(t *testing.T) {
 	fieldReview(t, detail.Freshness.Fields["summary"], "", 0)
 	fieldReview(t, detail.Freshness.Fields["one_line"], "", 0)
 }
+
+// A project that has been running for months must rewrite from its current progress, so the rewrite reads the attached
+// chats summarized most recently rather than the ones attached first (#15308).
+func TestProjectEvidenceReadsTheMostRecentlyCompressedChats(t *testing.T) {
+	e := testEngine(t, nil)
+	st := e.Store
+	var attached []string
+	for i := range projectEvidenceChatsMost + 2 {
+		id := fmt.Sprintf("lark-c%d", i)
+		// Attached in order, summarized one hour apart, so the two attached first are the two the rewrite drops.
+		if err := st.PutChat(&Chat{ID: id, Kind: "group", Name: id, CompressedAt: projectEvidenceTime.Add(time.Duration(i) * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PutSummary(KindChat, id, "Summary of "+id); err != nil {
+			t.Fatal(err)
+		}
+		attached = append(attached, id)
+	}
+	// A chat attached in the middle that never produced a summary sorts after every summarized one.
+	if err := st.PutChat(&Chat{ID: "lark-pending", Kind: "group", Name: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	attached = slices.Insert(attached, 3, "lark-pending")
+	projectUpdateOK(t, e, "garden", Update{Chats: attached, Log: "Long-running project"})
+	p, ok := st.Project("garden")
+	if !ok {
+		t.Fatal("garden is missing")
+	}
+	in, _ := e.projectEvidence(p, st.projectTimeline(p, false))
+	var ids []string
+	for _, c := range in.Chats {
+		ids = append(ids, c.ID)
+	}
+	want := []string{"lark-c9", "lark-c8", "lark-c7", "lark-c6", "lark-c5", "lark-c4", "lark-c3", "lark-c2"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("rewrite input = %v, want the most recently summarized %v", ids, want)
+	}
+}
+
+// Chats summarized at the same moment keep the order they were attached in, so the input stays stable.
+func TestProjectEvidenceChatsKeepAttachmentOrderOnTies(t *testing.T) {
+	e := testEngine(t, nil)
+	for _, id := range []string{"a", "b", "c"} {
+		if err := e.Store.PutChat(&Chat{ID: id, CompressedAt: projectEvidenceTime}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &Project{Slug: "garden", Chats: []string{"a", "b", "c"}}
+	if got := e.projectEvidenceChats(p); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Fatalf("ties = %v, want the attachment order", got)
+	}
+}

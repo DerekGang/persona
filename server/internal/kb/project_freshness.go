@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/kbwire"
 	"github.com/nwverse/persona/server/internal/prompts"
@@ -19,6 +20,10 @@ const (
 	projectSummaryOutcomesMost  = 5
 	projectSummaryDecisionsMost = 5
 	projectSummaryPitfallsMost  = 3
+	// projectEvidenceChatsMost bounds how many attached chats a rewrite reads (projectEvidenceChats).
+	projectEvidenceChatsMost = 8
+	// projectEvidenceSummaryRunes bounds each chat summary handed to the model.
+	projectEvidenceSummaryRunes = 1500
 )
 
 type projectFieldRecord struct {
@@ -171,6 +176,22 @@ func projectMemoryVerification(r ProjectMemoryRecord) (string, bool) {
 	return verification, verification == ProjectMemoryAgentReported
 }
 
+// projectEvidenceChats picks the attached chats a rewrite reads: the ones summarized most recently first, so a project
+// that has been running for months sees its current progress instead of the chats attached first. Ties keep attachment
+// order and chats that never produced a summary come last. The order follows CompressedAt rather than LastAt on purpose:
+// a new message would otherwise reorder the input between the draft and the commit and waste the rewrite.
+func (e *Engine) projectEvidenceChats(p *Project) []string {
+	ids := slices.Clone(p.Chats)
+	at := make(map[string]time.Time, len(ids))
+	for _, id := range ids {
+		if c, ok := e.Store.Chat(id); ok {
+			at[id] = c.CompressedAt
+		}
+	}
+	slices.SortStableFunc(ids, func(a, b string) int { return at[b].Compare(at[a]) })
+	return ids[:min(len(ids), projectEvidenceChatsMost)]
+}
+
 // projectEvidence reads the same bounded input on the read and refresh paths.
 // Pending chat messages are reported separately because they were not in the prompt.
 func (e *Engine) projectEvidence(p *Project, timeline projectTimeline) (projectInput, []kbwire.ProjectEvidenceRef) {
@@ -188,10 +209,10 @@ func (e *Engine) projectEvidence(p *Project, timeline projectTimeline) (projectI
 	if p.Pinned != "" {
 		add(KindProject+"/"+p.Slug+"/meta.json#pinned", "", p.Pinned)
 	}
-	for _, cid := range p.Chats[:min(len(p.Chats), 8)] {
+	for _, cid := range e.projectEvidenceChats(p) {
 		sum := e.Store.Summary(KindChat, cid)
-		if r := []rune(sum); len(r) > 1500 {
-			sum = string(r[:1500]) + "…"
+		if r := []rune(sum); len(r) > projectEvidenceSummaryRunes {
+			sum = string(r[:projectEvidenceSummaryRunes]) + "…"
 		}
 		ref := KindChat + "/" + cid
 		pc := prompts.KBProjectChat{ID: cid, Summary: sum}
