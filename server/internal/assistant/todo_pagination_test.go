@@ -232,9 +232,10 @@ func TestTodosClosedLimitBoundsClosedButKeepsOpenAndWholeListNumbers(t *testing.
 		}
 	}
 	var closedNext struct {
-		Todos      []listedTodo `json:"todos"`
-		NextCursor string       `json:"closed_next_cursor"`
-		HasMore    bool         `json:"closed_has_more"`
+		Todos      []listedTodo         `json:"todos"`
+		NextCursor string               `json:"closed_next_cursor"`
+		HasMore    bool                 `json:"closed_has_more"`
+		Board      *todoBoardProjection `json:"board"`
 	}
 	if err := json.Unmarshal(boundedBody, &closedNext); err != nil {
 		t.Fatal(err)
@@ -253,6 +254,42 @@ func TestTodosClosedLimitBoundsClosedButKeepsOpenAndWholeListNumbers(t *testing.
 	}
 	if closed != closedLimit {
 		t.Errorf("the bounded list carries %d closed rows, want %d", closed, closedLimit)
+	}
+	if closedNext.Board == nil {
+		t.Fatal("the bounded list lost the server board")
+	}
+	if got := closedNext.Board.Counts.Done; got != closedLimit {
+		t.Errorf("the bounded board counts %d done rows, want %d", got, closedLimit)
+	}
+	checkBoardRow := func(id, where string) {
+		if _, ok := byID[id]; !ok {
+			t.Errorf("the bounded board names %s outside the bounded rows in %s", id, where)
+		}
+	}
+	for _, group := range closedNext.Board.StatusGroups {
+		for _, entry := range group.Entries {
+			checkBoardRow(entry.TodoID, "status entry")
+			for _, id := range entry.FoldedChildIDs {
+				checkBoardRow(id, "folded child")
+			}
+			for _, id := range entry.SurfacedChildIDs {
+				checkBoardRow(id, "surfaced child")
+			}
+		}
+	}
+	for _, group := range closedNext.Board.DirectionGroups {
+		for _, id := range group.TodoIDs {
+			checkBoardRow(id, "direction group")
+		}
+	}
+	for _, node := range closedNext.Board.SidebarTree {
+		checkBoardRow(node.TodoID, "sidebar node")
+		for _, id := range node.ChildIDs {
+			checkBoardRow(id, "sidebar child")
+		}
+		for _, id := range node.SurfacedChildIDs {
+			checkBoardRow(id, "sidebar surfaced child")
+		}
 	}
 	for _, id := range []string{"todo_open_old", "todo_failed_old", "todo_shared_a", "todo_shared_b"} {
 		if _, ok := byID[id]; !ok {

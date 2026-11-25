@@ -58,6 +58,12 @@ beforeEach(async () => {
       return {
         todos: [done("done-recent", "Recent done", "2026-11-24T11:00:00Z")],
         counts: { open: 0, needs_you: 0, in_progress: 0, sections: { done: 55, cancelled: 0 } },
+        board: {
+          status_groups: [{ key: "done", total_count: 55, visible_count: 1, entries: [{ todo_id: "done-recent" }] }],
+          direction_groups: [],
+          sidebar_tree: [],
+          counts: { needs_you: 0, in_progress: 0, pending_review: 0, waiting: 0, someday: 0, done: 55, open_total: 0 },
+        },
         closed_cursors: { assistant: { next_cursor: "closed-1", has_more: true } },
       };
     }
@@ -75,7 +81,7 @@ beforeEach(async () => {
   });
   await refreshTodos();
   Object.assign(getState(), {
-    assistant: { machine_id: "m1", main: "main", conversations: [] },
+    assistant: { machine_id: "m1", main: "main", conversations: [], todos_v2: true },
     features: ["todo_view"],
   });
   host = document.createElement("div");
@@ -100,6 +106,7 @@ describe("older closed history", () => {
     const fold = section.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
     expect(fold.textContent).toContain(t("todos.section_done"));
     expect(section.dataset.todos, "the server's whole-list count is not a visible row count").toBe("1");
+    expect(getState().todoBoard).not.toBeNull();
     expect(host.textContent).not.toContain("Older done");
 
     await act(async () => fold.click());
@@ -109,6 +116,7 @@ describe("older closed history", () => {
     expect(host.textContent).toContain("Older done");
     expect(section.dataset.todos, "older rows are drawn from the cursor page").toBe("2");
     expect(getState().closedCursors.assistant).toEqual({ next_cursor: "", has_more: false });
+    expect(getState().todoBoard, "the bounded board yields to local triage for appended rows").toBeNull();
   });
 
   it("keeps older history reachable when the bounded window has no matching row", async () => {
@@ -130,7 +138,7 @@ describe("older closed history", () => {
     localStorage.setItem("persona.todos.grouping", "status");
     await refreshTodos();
     Object.assign(getState(), {
-      assistant: { machine_id: "m1", main: "main", conversations: [] },
+      assistant: { machine_id: "m1", main: "main", conversations: [], todos_v2: true },
       features: ["todo_view"],
     });
 

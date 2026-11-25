@@ -35,7 +35,7 @@ import type { Resolution } from "./answered";
 import { answersIn, type DelegatedAnswer, type Reanswer } from "./delegate";
 import { nextLaunchExpiry, registerLaunchRowObserver, settledLaunches } from "./launch-handoff";
 import type { AgentLaunch } from "./new-agent";
-import { isSpacesSupported, makeSessionLookup, type SessionLookup, type Todo } from "./todos";
+import { isSpacesSupported, makeSessionLookup, type SessionLookup, type Todo, type TodoBoardProjection } from "./todos";
 import { releaseAttachments } from "./attachments";
 import { dropElicitationDraft } from "./elicitation";
 import type { OutboxEntry } from "./outbox";
@@ -116,6 +116,8 @@ export interface State {
   closedCursors: Record<string, TodoClosedCursor>;
   closedLoading: boolean;
   closedError: string | null;
+  /** Optional server-computed `board` projection tree from GET /todos under todos_v2 (#15800). */
+  todoBoard: TodoBoardProjection | null;
   todosSupported: boolean;
   todosLoaded: boolean;
   todosError: string | null;
@@ -166,6 +168,7 @@ let state: State = {
   closedCursors: {},
   closedLoading: false,
   closedError: null,
+  todoBoard: null,
   todosSupported: true,
   todosLoaded: false,
   todosError: null,
@@ -1675,15 +1678,26 @@ function numbered<T>(path: string, read: () => Promise<T> = () => api<T>(path)) 
 // The last to-do list the hub answered and its validator (#9590; the `GET /api/v1/todos` row in docs/assistant/todos.md):
 // the hub tags its merged list with `ETag: W/"t1-<hash of its bytes>"` and answers a read naming that tag with a 304 and
 // no body. Most {"type":"todos"} pushes change nothing the list holds, so a read sends the tag and a 304 applies the kept
-// answer again, as a 200 with those same bytes would. The Web's opt-in answer is not a page: it carries every open to-do
-// and a bounded closed window, so it replaces this list whole; older closed history uses the advertised cursor.
+// answer again, as a 200 with those same bytes would. The Web's opt-in answer is not a page: it carries every open
+// to-do, a bounded closed window and the server's board projection, so it replaces this list whole; older closed
+// history uses the advertised cursor.
 // Memory only, one login's: reset() drops it, and a tag kept under another login is not sent.
-type TodoListAnswer = {
+type TodosListAnswer = {
   todos: Todo[];
   shared_blockers?: unknown[];
+  board?: TodoBoardProjection;
   closed_cursors?: Record<string, TodoClosedCursor>;
   notModified?: boolean;
 };
+
+function validTodoBoard(raw: unknown): TodoBoardProjection | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Partial<TodoBoardProjection>;
+  if (!Array.isArray(b.status_groups) || !Array.isArray(b.direction_groups) || !Array.isArray(b.sidebar_tree) || !b.counts || typeof b.counts !== "object") {
+    return null;
+  }
+  return b as TodoBoardProjection;
+}
 
 type TodoPageAnswer = {
   todos: Todo[];
@@ -1691,12 +1705,12 @@ type TodoPageAnswer = {
   has_more: boolean;
 };
 
-let keptTodos: { owner: string; etag: string; revision: string; answer: TodoListAnswer } | null = null;
+let keptTodos: { owner: string; etag: string; revision: string; answer: TodosListAnswer } | null = null;
 let defaultTodos: Todo[] = [];
 let olderClosedTodos: Todo[] = [];
 let closedEpoch = 0;
 
-function closedCursorsOf(answer: TodoListAnswer): Record<string, TodoClosedCursor> {
+function closedCursorsOf(answer: TodosListAnswer): Record<string, TodoClosedCursor> {
   const out: Record<string, TodoClosedCursor> = {};
   for (const [manager, cursor] of Object.entries(answer.closed_cursors ?? {})) {
     if (cursor?.has_more && cursor.next_cursor) out[manager] = cursor;
@@ -1715,12 +1729,12 @@ function mergeTodoRows(base: Todo[], older: Todo[]): Todo[] {
   return out;
 }
 
-async function readTodos(): Promise<TodoListAnswer> {
+async function readTodos(): Promise<TodosListAnswer> {
   const owner = credentialOwner();
   const kept = keptTodos?.owner === owner ? keptTodos : null;
   let status = 0;
   let reply: Headers | undefined;
-  const answer = await api<TodoListAnswer>("/todos", {
+  const answer = await api<TodosListAnswer>("/todos", {
     query: { closed_limit: "50" },
     headers: kept?.etag ? { "If-None-Match": kept.etag } : undefined,
     onResponse: (headers, code) => { status = code; reply = headers; },
@@ -1736,7 +1750,7 @@ async function readTodos(): Promise<TodoListAnswer> {
   return answer;
 }
 
-const todosAsked = numbered<TodoListAnswer>("/todos", readTodos);
+const todosAsked = numbered<TodosListAnswer>("/todos", readTodos);
 const assistantAsked = numbered<AssistantInfo>("/assistant");
 
 // refresh() calls, numbered the same way: one that started before the last one applied, or before reset(), is older
@@ -1802,7 +1816,7 @@ export async function refresh() {
 }
 
 /** Both refresh paths share the list, error and unsupported-hub (404) handling; only a fresh answer finishes loading. */
-function applyTodos(todos: PromiseSettledResult<TodoListAnswer>, fresh: () => boolean) {
+function applyTodos(todos: PromiseSettledResult<TodosListAnswer>, fresh: () => boolean) {
   if (!fresh()) return; // a later answer is in place, or this one belongs to a login reset() ended
   if (todos.status === "fulfilled") {
     if (todos.value.notModified) {
@@ -1811,6 +1825,7 @@ function applyTodos(todos: PromiseSettledResult<TodoListAnswer>, fresh: () => bo
     }
     const list = todos.value.todos ?? [];
     const sharedBlockers = Array.isArray(todos.value.shared_blockers) ? todos.value.shared_blockers : [];
+    const todoBoard = validTodoBoard(todos.value.board);
     closedEpoch++;
     defaultTodos = list;
     olderClosedTodos = [];
@@ -1820,6 +1835,7 @@ function applyTodos(todos: PromiseSettledResult<TodoListAnswer>, fresh: () => bo
     set({
       todos: list,
       sharedBlockers,
+      todoBoard,
       closedCursors: closedCursorsOf(todos.value),
       closedLoading: false,
       closedError: null,
@@ -1837,7 +1853,7 @@ function applyTodos(todos: PromiseSettledResult<TodoListAnswer>, fresh: () => bo
     closedEpoch++;
     defaultTodos = [];
     olderClosedTodos = [];
-    return set({ todos: [], sharedBlockers: [], closedCursors: {}, closedLoading: false, closedError: null, todosSupported: false, todosLoaded: true, todosError: null, spacesSupported: false });
+    return set({ todos: [], sharedBlockers: [], todoBoard: null, closedCursors: {}, closedLoading: false, closedError: null, todosSupported: false, todosLoaded: true, todosError: null, spacesSupported: false });
   }
   set({ todosLoaded: true, todosError: errorText(reason) });
 }
@@ -1919,6 +1935,9 @@ export async function loadOlderClosed(manager?: string) {
   olderClosedTodos = [...olderClosedTodos, ...added];
   set({
     todos: mergeTodoRows(defaultTodos, olderClosedTodos),
+    // The server board describes the bounded page. Once older rows are appended, let the view's local triage include
+    // them rather than rendering a board that cannot name them.
+    todoBoard: added.length ? null : state.todoBoard,
     closedCursors: cursors,
     closedLoading: false,
     closedError: failure ? errorText(failure) : null,
@@ -2255,6 +2274,7 @@ export function reset() {
     pins: NO_PINS,
     todos: [],
     sharedBlockers: [],
+    todoBoard: null,
     closedCursors: {},
     closedLoading: false,
     closedError: null,

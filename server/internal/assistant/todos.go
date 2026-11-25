@@ -1059,23 +1059,28 @@ func (s *Service) todoRoutes() {
 		} else if !paged {
 			s.tagTodoRevision(w, writes, p)
 		}
-		var sharedBlockers []projection.SharedBlocker
-		if !isExtension {
-			sharedBlockers = p.sharedBlockers()
-		}
-		if paged {
-			writeTodoPage(w, list, p, sharedBlockers, limit, after)
-			return
-		}
 		var closedNext string
 		var closedHasMore bool
 		if boundedClosed {
 			list, closedNext, closedHasMore = boundedTodoList(list, closedLimit)
 		}
+		var sharedBlockers []projection.SharedBlocker
+		var board *todoBoardProjection
+		if !isExtension {
+			sharedBlockers = p.sharedBlockers()
+			if !paged && s.settings(r.Context()).todosV2On() {
+				board = buildTodoBoardProjection(list, s.todoBoardDirectionLabels(r.Context()))
+			}
+		}
+		if paged {
+			writeTodoPage(w, list, p, sharedBlockers, limit, after)
+			return
+		}
 		apierr.WriteJSON(w, todosList{
 			Todos:            list,
 			Counts:           p.counts(),
 			SharedBlockers:   sharedBlockers,
+			Board:            board,
 			ClosedNextCursor: closedNext,
 			ClosedHasMore:    closedHasMore,
 		})
