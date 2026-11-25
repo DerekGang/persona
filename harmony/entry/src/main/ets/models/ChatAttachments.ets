@@ -921,12 +921,13 @@ export class ChatAttachments {
       await source.release().catch((): void => {});
       return { mime: info.mimeType, data: data };
     }
-    // encodeSource owns and releases the source on every path.
-    return ChatAttachments.encodeSource(source, item.mime, limits.imageBytes, limits.maxSide, true);
+    // encodeSource owns and releases the source. It resolves to undefined only for a valid photo whose
+    // packed bytes still exceed the inline budget; decode/pack failures reject instead of becoming a file.
+    return ChatAttachments.encodeSource(source, item.mime, limits.imageBytes, limits.maxSide);
   }
 
   private static async encodeSource(source: image.ImageSource, expectedMime: string, byteBudget: number,
-    maxSide: number = 1600, allowOriginalFallback: boolean = false): Promise<EncodedAttachmentImage | undefined> {
+    maxSide: number = 1600): Promise<EncodedAttachmentImage | undefined> {
     let packer: image.ImagePacker | undefined;
     let pixels: image.PixelMap | undefined;
     try {
@@ -958,8 +959,6 @@ export class ChatAttachments {
       // A picked photo that packs but cannot meet the hub's inline byte limit goes back as its untouched file.
       return undefined;
     } catch (error) {
-      if (allowOriginalFallback && !(error instanceof Error && error.message.startsWith('chat_attachment_')))
-        return undefined;
       if (error instanceof Error && error.message.startsWith('chat_attachment_')) throw error;
       throw new Error('chat_attachment_image_unsupported');
     } finally {
