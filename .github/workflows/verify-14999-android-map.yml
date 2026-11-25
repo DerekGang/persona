@@ -1,0 +1,51 @@
+name: Verify Android maps and chat tool views
+on:
+  push:
+    branches: ['verify/14999-android-map-v12']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the repository Android toolchain
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add --toolchain 1.98.0 aarch64-linux-android x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Verify contracts and capture maps in all appearances
+        working-directory: android
+        run: |
+          ./gradlew --no-daemon --max-workers=4 \
+            :core:domain:test --tests '*ToolViewsTest' \
+            :core:hub:test --tests '*ToolViewCapabilityTest' --tests '*HttpExtensionManagementTest' \
+            :feature:settings:testDebugUnitTest --tests '*ExtensionMapShotsTest' --tests '*NativeStreamColumnsTest' \
+            :feature:chat:compileDebugKotlin :app:compileDebugKotlin
+          test -s feature/settings/build/extension-map-shots/glass-light.png
+          test -s feature/settings/build/extension-map-shots/glass-dark.png
+      - name: Android lint
+        run: scripts/app/android.sh lint
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-map-review
+          path: |
+            android/core/domain/build/test-results/test
+            android/core/hub/build/test-results/test
+            android/feature/settings/build/test-results/testDebugUnitTest
+            android/feature/settings/build/extension-map-shots
+          retention-days: 3
