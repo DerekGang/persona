@@ -190,4 +190,15 @@ describe("the assistant's live text", () => {
     await act(() => tr.loadEarlier());
     expect(tr.streaming).toBe("Writing the reply");
   });
+
+  it("keeps a preview with a late echo until the next input really arrives", async () => {
+    await delta("The turn is answering.");
+    items([{ ...prompt, id: "u6", seq: 6 }], 5);
+    expect(tr.streaming).toBe("The turn is answering.");
+    await delta("");
+    expect(tr.streamEndedThrough).toBe(6);
+    items([{ ...prompt, id: "u7", seq: 7, kind: "image" }], 6);
+    expect(tr.streaming).toBe("");
+    expect(tr.streamEndedThrough).toBeUndefined();
+  });
 });

@@ -111,8 +111,8 @@ describe("awaitingTurn (#3654)", () => {
   it("holds working across early thought/tool pushes until the hub catches up or the same turn finishes", () => {
     for (const step of [{ kind: "thinking" }, { kind: "tool" }]) {
       const turn = seg({ steps: [step] });
-      expect(awaitingTurn(turn, "idle", at + 500, undefined, "2026-11-05T09:59:00Z")).toBe(true);
-      expect(awaitingTurn(turn, "idle", at + 500, undefined, "2026-11-05T10:00:01Z")).toBe(false);
+      expect(awaitingTurn(turn, "idle", at + 500)).toBe(true);
+      expect(awaitingTurn(turn, "idle", at + 500, undefined, true)).toBe(false);
       expect(awaitingTurn(turn, "offline", at + 500)).toBe(false);
     }
   });

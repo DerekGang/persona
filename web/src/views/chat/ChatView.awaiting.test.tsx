@@ -372,10 +372,15 @@ describe("a message waiting for its turn to start (#2450)", () => {
     expect(host.textContent?.match(/Previously answered/g)).toHaveLength(1);
   });
 
-  it("shows retry when the hub settles a turn without ever announcing working or writing a reply", async () => {
+  it("keeps an already visible idle state from settling a new echo and shows retry on a later idle update", async () => {
     const at = Date.now() - 1_000;
     captured.session.state_since = new Date(at + 500).toISOString();
     transcript.items = [{ id: "u1", seq: 1, role: "user", kind: "text", text: "Write a status line", ts: new Date(at).toISOString() }];
+    act(() => root.render(<ChatView mid="hub" sid="c1" />));
+    await flush();
+    expect(host.textContent).not.toContain(t("chat-empty-response.no_response"));
+    expect(stopControl()).not.toBeNull();
+    captured.session = { ...captured.session, state_since: new Date(at + 600).toISOString() };
     act(() => root.render(<ChatView mid="hub" sid="c1" />));
     await flush();
     expect(host.textContent).toContain(t("chat-empty-response.no_response"));

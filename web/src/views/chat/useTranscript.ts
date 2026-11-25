@@ -5,7 +5,7 @@ import { api, ApiError, errorText, isAbort, READ_TIMEOUT_MS, sessionHistoryNotFo
 import { sessionLoadError } from "../../lib/session-link";
 import { getState, listenSession, markConversationDeleted, send, type ItemsEvent } from "../../lib/store";
 import { afterPull, afterPush, FRESH_TALLY, newestItemAt, notLive as tallyNotLive, RevWatch, shouldPull, type StaleTally } from "../../lib/stale-page";
-import { mergeItems, withoutFolded } from "../../lib/turns";
+import { isUserInput, mergeItems, withoutFolded } from "../../lib/turns";
 import { chosenManager } from "../../lib/manager-choice";
 import { discardFeedCache, discardMemoryPage, feedCacheScope, readFeedCache, readMemoryPage, writeFeedCache, writeMemoryPage, type FeedCache } from "../../lib/feed-cache";
 import type { Item, ItemsPage } from "../../lib/types";
@@ -354,7 +354,13 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       setStreamEndedThrough(undefined);
     };
     const showLive = (batch?: Item[]) => {
-      if (liveRaw.current && liveThrough && batch?.some((i) => i.role === "user" && i.kind === "text" && !i.queued && i.seq > liveThrough)) return endLive();
+      // The echo can arrive after its first delta. Only a completed preview belongs to an earlier
+      // turn when a new input advances past the preview's last known transcript boundary.
+      const input = liveRaw.current && batch?.findLast((i) => i.seq > liveThrough && !i.queued && isUserInput(i));
+      if (input) {
+        if (handoffTimer !== undefined && liveThrough) return endLive();
+        liveThrough = input.seq;
+      }
       if (assistant) {
         if (batch?.some((i) => i.role === "assistant" && i.kind === "text" && i.seq >= liveThrough)) endLive();
         return;
@@ -385,7 +391,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       clearTimeout(handoffTimer);
       handoffTimer = undefined;
       setStreamEndedThrough(undefined);
-      liveThrough = covered.current;
+      liveThrough = Math.max(covered.current, latest.at(-1)?.seq ?? 0);
       liveRaw.current = text;
       if (assistant) {
         liveShown.current = text;

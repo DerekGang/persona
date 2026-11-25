@@ -45,7 +45,7 @@ import { t as tr } from "../../i18n";
 import { lastEditablePrompt, promptsOf, rewindBlock, rewindDone, rewindSession, rewindTarget, type RewindRestore } from "../../lib/rewind";
 import { EDIT_SEND_SETTLE_MS } from "../../lib/edit-last-key";
 import { sendDraft } from "../../lib/drafts";
-import { chatLines, freshWords, openRecap, parseUserText, segments, type ChatLine, type UserMessage } from "../../lib/turns";
+import { chatLines, freshWords, isUserInput, openRecap, parseUserText, segments, type ChatLine, type UserMessage } from "../../lib/turns";
 import { foldsBackgroundRounds, relayNeedsAttention } from "../../lib/background-fold";
 import type { Interaction, Item, Session, Subagent } from "../../lib/types";
 import { REVIEW_FEATURE } from "../../lib/types";
@@ -546,7 +546,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const lastSeg = segs[segs.length - 1];
   const endedThrough = tr.streamEndedThrough;
   const inputAfterPreview = endedThrough !== undefined && endedThrough > 0 &&
-    lastSeg?.user?.rawInput?.some((item) => item.seq > endedThrough);
+    tr.items.some((item) => item.seq > endedThrough && !item.queued && isUserInput(item));
   const streamEnded = tr.streamEnded && !inputAfterPreview;
   const replyPreview = inputAfterPreview ? "" : tr.streaming;
   const [awaitNow, setAwaitNow] = useState(() => Date.now());
@@ -557,7 +557,20 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const stoppedTurn = stoppedInput?.chat === chatNow.current ? stoppedInput.id : undefined;
   // An existing background command can keep the row working before the next foreground turn picks up the echo.
   const pickupState = state === "working" && session?.background_working ? "idle" : state;
-  const awaitedTurn = awaitingTurn(lastSeg, pickupState, awaitNow, turnFailure, session?.state_since) ? lastSeg?.user?.id : undefined;
+  const inputKey = lastSeg?.user ? `${mid}/${sid}/${lastSeg.user.id}` : undefined;
+  const hubStateAt = Date.parse(session?.state_since ?? "");
+  const observedInput = useRef<{ key: string; stateSince: number } | undefined>(undefined);
+  const settled = pickupState === state && observedInput.current?.key === inputKey &&
+    hubStateAt > (observedInput.current?.stateSince ?? NaN);
+  useLayoutEffect(() => {
+    // Only compare status updates from the hub after observing this echo. The Node's input timestamp
+    // cannot tell whether the hub's already visible idle state belongs to the same turn.
+    if (!inputKey) observedInput.current = undefined;
+    else if (observedInput.current?.key !== inputKey || Number.isNaN(observedInput.current.stateSince)) {
+      observedInput.current = { key: inputKey, stateSince: hubStateAt };
+    }
+  }, [inputKey, hubStateAt]);
+  const awaitedTurn = awaitingTurn(lastSeg, pickupState, awaitNow, turnFailure, settled) ? lastSeg?.user?.id : undefined;
   const awaiting = awaitedTurn !== undefined && awaitedTurn !== stoppedTurn && !streamEnded;
   const awaitingNow = useRef<string | undefined>(undefined);
   awaitingNow.current = awaiting ? awaitedTurn : undefined;
