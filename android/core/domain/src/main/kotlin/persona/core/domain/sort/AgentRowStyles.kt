@@ -141,4 +141,12 @@ interface AgentListDisplaySettings {
     suspend fun setDisplay(value: AgentListDisplay)
     val seenRows: Flow<AgentSeenRows>
     suspend fun setSeenRows(value: AgentSeenRows)
+    /** Selected hub's `use_herdr_tab_name` setting; null while unsupported (older hub) or unread. */
+    val useHerdrTabName: Flow<Boolean?> get() = kotlinx.coroutines.flow.flowOf(null)
+    /** Refreshes the selected hub's display settings. */
+    suspend fun refreshHerdrTabName() {}
+    /** Saves `use_herdr_tab_name` on the selected hub and caches the acknowledged value. */
+    suspend fun setUseHerdrTabName(enabled: Boolean) {
+        throw UnsupportedOperationException("Updating use_herdr_tab_name is unsupported")
+    }
 }

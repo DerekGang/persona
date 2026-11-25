@@ -46,8 +46,19 @@ rows).
   the parent, and the title's ⌄ switches to the other sides. No New Side Session: the desktop app makes them.
 - **Landing**: a notification, a Needs You card or a link that names a side opens its parent with the side shown
   (`AppModel.openChat` sets `sideLanding`; a `ChatView` given a folded side opens its parent the same way).
+- **Which side keeps a parent Unread (#13524)**: when a parent row in the Agents list is Unread because one or more
+  folded sides have unseen replies (`SideFold.UnreadSummary` / `SideUnreadLine`), a line under the parent's title in the
+  unread tint shows the `sideSessions` mark, the most recent unread side's title ("+N" for other unread sides), and
+  opens that side directly in one tap via the parent's side-session view (`SideSessionOpener` -> `SideLanding`). When
+  only sides are unread the line replaces the parent's own already-seen preview; when the parent is unread too, both
+  lines show. Before folded rows load on a paged list (`roots=1`), the line shows only the unread count (non-clickable)
+  and triggers a one-shot `AppModel.refreshUnreadSides` read through `ChildSessionIndex`. Marking only the parent seen
+  keeps the parent Unread while a side is unread; marking its held sides seen takes it out of Unread counts immediately
+  (`SideFold.unreadClearedBySeen`). Rows with no unread side stay unchanged.
 - **Words** (`Localizable.xcstrings`): Side Sessions, Side Sessions (N), From Side Session · <title>, A side session
-  needs you, No Side Sessions; zh-Hans 分支会话 (「来自分支会话 · <title>」), ja 子セッション (「子セッション・<title>から」).
+  needs you, No Side Sessions, New side reply: <title>, Side session “<title>” has a new reply, Open side session
+  “<title>”, Also with new replies: <titles>, N side sessions have new replies; zh-Hans 分支会话 (「来自分支会话 · <title>」,
+  「分支新回复：<title>」), ja 子セッション (「子セッション・<title>から」, 「子セッションに新着：<title>」).
 - **Not yet**: a search hit inside a side (`search_hits[<id>].hit_session_id`) lands on the parent without the side.
 - Screenshots: `-openSession <machine>/<session> -showSideSessions chip|sheet|side` hangs three sample sides under that
   session (one asking, one working, one stopped) and opens nothing, the sheet, or the first side;
@@ -61,6 +72,16 @@ Working sessions also use last activity, not work-start time; seen, idle and not
 "Used" means messages or work progress, not opening a page: reading a reply does not change its activity time or position. Machine / hub filters, search, quick state filters and row menus remain; collapse / expand actions are hidden in this view.
 The existing `AgentsFeed` and scroll protection remain; structure updates only when activity timestamps change relative session order, with reordering paused while browsing to preserve reading position.
 Mac's previous / next Agent follows pinned order then recent activity in this mode; other modes retain their order.
+
+## Use the herdr tab name as the session name (#13899)
+
+Who it serves: people who name terminal tabs in herdr and want Agents on iOS to match the names they see on Web (`use_herdr_tab_name` in `GET`/`PUT /api/v1/agents/display-settings`). Default: off; older hubs that omit `use_herdr_tab_name` or return 404 keep the setting off and hide the switch.
+
+- **Per-hub sync and caching**: each paired hub group keeps its own `AgentsDisplayStore` (`apple/Persona/App/AgentsDisplayStore.swift`), cached in `StateCache` (`agents-display` / `agents-display.<group>`), refreshed on every hub hello, pull-to-refresh, and when Settings › Agent opens. Writes send a single-field `PUT /api/v1/agents/display-settings` (`{"use_herdr_tab_name": true|false}`) and only update local state after the hub acknowledges; failures preserve the last acknowledged value and offer Retry. Demo Mode leaves the switch hidden and off.
+- **Settings › Agent**: `AgentHerdrTabNameSection` (`apple/Persona/Views/Settings/SettingsAgentView.swift`) exposes the **Use the herdr tab name as the session name** switch (with saving status and Retry on write failure) and adds herdr/tab-name search aliases under `settings.search.agents`.
+- **Display and search**: `apple/Shared/SessionNaming.swift` (`herdrTabName`, `displayTabName(preferTab:)`, `displayTitle(preferTab:)`, `displayTitleDetail(preferTab:)`, `usesUnifiedHerdrRename(preferTab:)`) mirrors server `Session.HerdrTabName` and Web `web/src/lib/format.ts`. When enabled for a session's hub, Agents rows (`SlotRow` across Avatar / Two Lines / State Cards / BeautifulUI, `CompactSlotRow`, `WorkspaceAgentRow`, `TabGroupRow`, `SessionRow`, `SlotCard`, Needs You rows), Chat headers (`ChatView` title, `devSubtitle`, `SessionOverviewSheet` / `SessionInfoSheet`, `SubagentOverview`, `ChildSessionCard`, `NextNeedsYouStrip`, `SiblingList`), `TerminalsView`, and Search (`AssistantFullSearch`, Agents list search, `ForwardTargets`, `MentionMenu`) promote the herdr tab name to the main title, move a differing CLI session title to the secondary/detail line, and avoid repeating the tab name in the place line. When off, rendering stays unchanged.
+- **Unified Rename**: when enabled for a session with a herdr tab name, `RenameSessionAlert` (`SessionRenameForm`) merges into a single **Name** field with unified hint text (`"Updates the herdr tab and, where supported, the CLI session name."`), updating `tab_name` and — for Claude Code and Codex — also `title` (tab-only for other CLIs). When off, the separate Tab name and Session name fields stay unchanged.
+- **Tests**: `HerdrTabNameTests` (`apple/PersonaTests/HerdrTabNameTests.swift`).
 
 ## Pinned directions (#4352)
 
@@ -494,6 +515,7 @@ Chat page:
   Currently text parsing; Claude Code also provides `apiErrorStatus`, `error`, `requestId` fields, preferred once hub reads them. DEBUG `-showErrorDetails YES` opens by default.
   Screenshots mock `MOCK_API_ERRORS=1`, assistant main and review chats.
 - Refusal fallback (#4489, the iOS half of #2528; web #4487, Android #4488): a notice with `model_refusal` is a line of its own after the exchange (`RefusalNotice`; `ChatStore` puts it with the turn's trailing rows, never in the work row): the upstream refused, which model Claude Code switched from and to (or that no switch is recorded), "later turns may keep using it" for scope `session`, the category, the explanation and the refusal's own words. Models go by their short names (`SessionModes.modelName`), where the web shows ids. While the session has `model_fallback`, a card above the composer (`ModelFallbackCard`, a `ReadinessCard`) names both models and the error since: a terminal session gets only the "type /model in Claude Code" step; a Persona conversation gets **Switch Back** (zh-Hans 回到配置的模型, ja 元に戻す; `POST …/restore-model`, refusals said in words by `ModelFallbackText.restoreError`), and the main conversation also **New Main Chat** (the card's own key, ja 新しいチャット: at the largest text size, stacked, the longer Japanese and English words still ended in "…", `docs/design/DESIGN_SYSTEM.md` 1.2 rule 3 (a), #5202). While `model_restore` is pending the card says only that the next start uses the configured model, and names it. The API error card offers no Retry while `turn_error_code` is `model_fallback_unavailable`. Items keep the refusal's words as their text, never an older hub's whole record line (`Item.publicRefusal`); `ChatCache` went to `chats-v17` so notices cached without `model_refusal` are dropped. In a Persona conversation (`plainRefusals`, set by `ChatView` from `session.assistant`; #5202) the line is one sentence with the model's short name and the record under a closed Details, and the card's title says which model answers now, with the configured model while pending; the rest goes under `ReadinessCard`'s Details. Tests: `ModelFallbackTests`, `ModelFallbackUITests` (mock `MOCK_MODEL_FALLBACK=1 MOCK_MAIN_ACTIONS=1`).
+- **Changed Files card** (`TurnChanges.swift`, `TurnChangesCard.swift`, #12016; parity with web #5157/#5294): shown after the final answer of a completed Agent exchange (`ChatStyle.dev`, never Assistant conversations, subagent views, running exchanges, clipped mid-exchange pages without a user start, interrupted/error turns, or exchanges containing an older fold without `fold.changes`). Lists up to 3 files initially with `FoldToggle` expansion pinned in place (`chatPinned`), reusing `CodeChangeCounts` (`+N`/`−N` omitted when any edit input was clipped) and `FileViewer.symbol(for:)`. Counts match `spec/fixtures/fold-changes/cases.json` across both unfolded work and folded `Fold.changes` (`ChatCache` bumped to `chats-v24` so cached folds preserve `changes`). **Review** opens `ReviewPage` in `.branch` scope; tapping a workspace file opens `.branch` review focused and unfolded on that file (`ReviewLogic.resolveTargetFile` resolves against `review.root` falling back to `cwd`), or falls back cleanly on dismiss to `FileViewer` when the hub lacks `git_review`, `cwd` is empty, the file is outside `cwd`, the review fails to load, or the review does not contain that file. Tests: `TurnChangesTests`.
 - Suggested next message (`SuggestionPill`): with session `suggestion`, an idle chat and an empty input, the shared Agent / Persona
   composer shows "✦ Suggestion … Use" above it (AI purple, not accent). This includes the main Persona conversation and other
   assistant chats; there is no assistant-specific rendering path. Tap or Fill In puts the text in the editable composer without
@@ -1771,11 +1793,14 @@ every platform are described from #13430; this section is the Apple side.
   has anything to draw so the host leaves its spacing out), `settings` (`settingsEntry(id:info:row:page:)`: an entry
   listed, searched and routed as the core's own through `SettingsPage.module(<id>)`) and the client-side
   `capabilities` (`provide(_:_:)`: an interface the core declares and asks for, such as `LiveScreen`; nil when no
-  active module provides it, and the core then offers none of it), and, since #14278, `shell_places`
+  active module provides it, and the core then offers none of it), since #14278, `shell_places`
   (`shellPage(id:_:)`: a page the core routes to by id, handed `PersonaHostApp.ShellContext`; the core lists its row and
-  opens its route only while a module provides it). Declared but **not yet served**, with no API until a module needs
-  one: `hello_hooks`, `frame_handlers`, `hub_session_lifecycle`, `phone_tools`, `intents`,
-  `push_categories` and `audio_leases` (the core's `AudioSessionBroker` does not exist yet). Each gets its registrar
+  opens its route only while a module provides it), and, since #13849, `audio_leases`
+  (`audioLease(id:kind:)`: a lease on the shared audio session, ranked `call > voice_conversation > meeting_recording >
+  playback`, recorded by the core's `AudioSessionBroker` in `apple/Shared/AudioSessionBroker.swift`, through which every
+  direct `AVAudioSession` call routes — guarded by `scripts/test/test_apple_audio_session_broker.py`). Declared but
+  **not yet served**, with no API until a module needs one: `hello_hooks`, `frame_handlers`, `hub_session_lifecycle`,
+  `phone_tools`, `intents` and `push_categories`. Each gets its registrar
   method and registry reader with the first module that needs it (#13849).
 - **The module list** (`apple/Persona/App/Modules.swift`) is the seed of the `PersonaHostApp` layer (#13430 decision 4;
   `apple/Packages/PersonaCore` stays the Rust binding). `PersonaHostApp` is the `ModuleHost` (a composer action hands
@@ -1815,10 +1840,13 @@ every platform are described from #13430; this section is the Apple side.
   its types 8 times in 4 files; now 0.
 - **Module homes and the core-only build** (#14017). A module that has left `apple/Persona/` lives in
   `apple/Modules/<Name>/`. `apple/modules.yml` (included by `project.yml`) compiles each home into the iPhone and Vision
-  apps and sets its condition (`PERSONA_MODULE_SCREEN_SHARE`, `PERSONA_MODULE_HEALTH`), under which `Modules.builtIn`
+  apps and sets its condition (`PERSONA_MODULE_SCREEN_SHARE`, `PERSONA_MODULE_HEALTH`, `PERSONA_MODULE_VOICE`), under which `Modules.builtIn`
   lists it;
   `apple/modules-core-only.yml`, enabled by `PERSONA_CORE_ONLY=YES` at `xcodegen generate`, leaves every home out, as
-  the server's `persona_core_only` tag does. `scripts/ci/apple.sh` builds that core-only app ("Core-only iOS build").
+  the server's `persona_core_only` tag does. `scripts/ci/apple.sh ios-core-only` (and the local `all` lane) builds
+  that core-only app ("Core-only iOS build"); in hosted CI, `.github/workflows/apple-test.yml` runs it in its own
+  parallel `ios-core-only` job alongside the full `ios` lane so both gate `CI required` without pushing `ios` past its
+  120-minute limit (#14496).
   The watch, widgets and extensions never compile a module home. Source-scanning PersonaTests (token, icon, motion,
   sheet and dialog rules) walk `apple/Modules` as well as `apple/Persona`.
 - **`screen-share`** (`apple/Modules/ScreenShare/`, #14017, `feature` = `module.screen-share`): a Mac's live screen over
@@ -1836,6 +1864,18 @@ every platform are described from #13430; this section is the Apple side.
   (`AppModel`, `Session.isHealth`), the phone's Health tools, the widgets and Health's settings stay in the core until
   their slots (`phone_tools`, widgets, `settings`) are served. The ratchet counts type names only: a core call to a
   module's method (a `View` extension) is caught by the core-only build, not by the ratchet.
+- **`voice`** (`apple/Modules/Voice/`, #13431, `feature` = `module.voice`): full-duplex voice in a conversation's page —
+  the composer's phone icon and Voice Chat, the call's bar in the composer's place, the line a call that ended by itself
+  leaves, its captions as the thread's last rows, Asking by Voice on a card, the voice settings on the voice extension's
+  page (`VoiceTimbreSection`) and the DEBUG switches `-showVoiceSample` / `-openVoice`. It provides `ConversationVoice`
+  (`apple/Persona/App/ConversationVoice.swift`), which the chat, the meeting page's follow-up, the question cards and
+  Settings ask for through `AppModel.voice`; without it the page offers no call, no Voice Chat row, no bar and no
+  captions, and the composer's microphone (dictation, core) is all there is. What a call runs on stays in the core for
+  now, because system calls, CarPlay and recording share it: the engine (`VoiceCalls`, `VoiceConversation`, the audio,
+  the socket; `apple/Persona/Voice`), the starts and refusals (`VoiceEntry`), the call screens (`apple/Persona/Calls`,
+  `apple/Persona/CarPlay`) and the call intents. `-openVoice silent`'s audio (`SilentVoiceAudio`) is core, since a call to
+  Persona takes it too. The ratchet counts `apple/Modules/Voice` (and `apple/PersonaCallIntents`); the voice directories
+  still in `apple/Persona` count as the core until they move (`guarded_dirs` in `scripts/test/test_apple_module_refs.py`).
 - **Adding a module.** Give its sources a directory of their own, classify that directory with the module id in
   `schema/module-classification.txt` (`docs/architecture/core-and-modules.md`, "Classification") and add the id to
   `GUARDED` in the ratchet; write a type
@@ -1865,7 +1905,7 @@ every platform are described from #13430; this section is the Apple side.
   Affirmative buttons require unlocking (`.authenticationRequired`); Deny does not. Plan approval from a notification uses `acceptEdits` (the whole plan has not been viewed, so commands still need individual approval),
   and "Approve and run automatically" is App-only. Buttons call resolve directly in the background without opening the App; failure (already handled, cannot reach hub) produces a local notification explaining why. Questions and terminal interactions have no buttons; tap to handle them.
   MCP forms and links are pushed too (#2433, `docs/protocol/protocol.md` "MCP elicitation"): the iOS app alone registers `features: ["withdraw", "elicitation"]` (`PushRegistrar.features`, the rule of `LiveConnection.helloFeatures`), so the hub pushes it these cards and waits for it while no app that shows them is open. Category `INTERACTION_ELICITATION` has no buttons: a tap opens the conversation, where the card arrives over the socket; the hub's withdrawal push takes it back like any card's. The alert names the MCP server and never carries the link or a form's values.
-  What the hub gives for taking a to-do's recommendation with one tap (#2056, `docs/assistant/todos.md` "Waiting for the owner"; the App's rows are in "Closeout, orphaned tasks and answerable decisions (#3612, #3618, #3804)"): each to-do waiting for the owner has `ask: {outcome?, verdict, recommend?, asked_at}` in `GET /api/v1/todos` (a `{"type":"todos"}` event when it comes up, is taken or ends), and a decision with a recommended option is pushed with category `TODO_DECIDE`, whose Take Recommendation action takes it, and a top-level `todo: {id, asked_at, recommend, manager}`; from a manager that says how the push may answer it, `todo` also has `ask` and `lockscreen`, with `options` and `aps.mutable-content: 1` when `lockscreen` is `answer`, while `open_only` sends category `TODO_DECIDE_OPEN`, with no action (#10465); both are taken with `POST /api/v1/todos/{id}/accept {"asked_at"}` (409: already handled, refresh; 423 with a `code` such as `dialog_open`: the Agent's node refused it and nothing was taken, #7343; 502: the recommendation did not reach the Agent, nothing taken). The watch's answer-only credential cannot call either route yet.
+  What the hub gives for taking a to-do's recommendation with one tap (#2056, `docs/assistant/todos.md` "Waiting for the owner"; the App's rows are in "Closeout, orphaned tasks and answerable decisions (#3612, #3618, #3804)"): each to-do waiting for the owner has `ask: {outcome?, verdict, recommend?, asked_at}` in `GET /api/v1/todos` (a `{"type":"todos"}` event when it comes up, is taken or ends), and a decision with a recommended option is pushed with category `TODO_DECIDE`, whose Take Recommendation action takes it, a top-level `todo_id` (without `interaction_id`), and `todo: {id, asked_at, recommend, manager}`; from a manager that says how the push may answer it, `todo` also has `ask` and `lockscreen`, with `options` and `aps.mutable-content: 1` when `lockscreen` is `answer`, while `open_only` sends category `TODO_DECIDE_OPEN`, with no action (#10465); both are taken with `POST /api/v1/todos/{id}/accept {"asked_at"}` (409: already handled, refresh; 423 with a `code` such as `dialog_open`: the Agent's node refused it and nothing was taken, #7343; 502: the recommendation did not reach the Agent, nothing taken). Delivered decision and needs-user pushes are keyed by `card_id` (`todo-ask:<todo id>`) and `todo_id` (falling back to `todo.id` from older hubs, without `interaction_id`) in `NotificationWithdrawal`, so `todo-ask:<todo id>` (via silent withdrawal push or WebSocket `interaction_resolved`) removes them from Notification Center while `NotificationWithdrawal.stale` never sweeps unanswered assistant cards or to-do decisions (#13916, #14388). The watch's answer-only credential cannot call either route yet.
   Settings › Notifications (`NotificationSettingsView`): "When you are needed" toggle, "When an Agent finishes" never / long tasks only / every time, Live Activities (Lock Screen and Dynamic Island / show details on Lock Screen / what each side of Dynamic Island shows, `IslandSettingsView`, `docs/apple/live-activity.md`), stored per device on the hub (`PushRegistrar.deviceID`). Changes save one at a time in the order they were made, each PUT the hub's last answer plus that one change, so a failed one reverts alone and no later PUT carries it (`NotificationSettingsModel.change`, #1913; the web's queue, #1285); quiet hours keep their own endpoint.
   Tapping a notification opens its session: use the completion-handler version of `UNUserNotificationCenterDelegate`, switch to the main queue to handle it, then call back (the async version returns on a background executor,
   UIKit receives completion off the main thread and a notification-triggered cold launch crashes).
@@ -2142,7 +2182,10 @@ Mac app is frozen: it decodes the same models and draws none of this (`#if os(ma
   into (#5569): without the title the line above already says, and with Later and Don't handle under its options as
   `BriefAcceptRow` has them there (`TodoAskRow`'s `deferrable`). A decision held for the briefing says so, and a
   suggested rule's line (`RuleSuggestionLine`) sits under it, as on `BriefAcceptRow`. An ask without options, and every
-  ask on the Mac, keeps `BriefAcceptRow`.
+  ask on the Mac, keeps `BriefAcceptRow`. While To-dos is V1 (from #10465's switch-on) an option is held on the device
+  instead, "✓ You chose … · Undo" for `Theme.Motion.todoUndo`, then sent through the asks route, and the fixed answers
+  go at once through that route while the hub lists it (`DecisionAnswers.Hold`; "To-dos (V1, #10465)", the rows'
+  answers).
 - **Not built**: the `TODO_DECIDE` notification's option actions (the push payload carries `options` when its
   `lockscreen` is `answer`, and `TODO_DECIDE_OPEN`, no actions, when it is `open_only`, #10465); the watch.
 - **Tests**: `CloseoutTests` (decoding, claims, the rows' line, the stripped block, nothing new without a closeout),
@@ -2364,6 +2407,73 @@ built in stages behind the hub's `todo_view`; this section grows with it.
     kept with the views at least once a minute); the line registers with `titleSaysLink()`, so the shell's pill stays
     away. Tests: `TodoOutboxTests`, `TodosListWritesTests`, the UI suite's `testTickAndUndo`, `testSwipeSomeday`,
     `testDeleteAndUndo` and `testOfflineIsSaidOnce` against `MOCK_TODO_VIEW=1`.
+- **The rows' answers** (`apple/Persona/Features/Todos/Components/`, `AskCard` and `AskPointer` in
+  `apple/Persona/DesignSystem/`; DESIGN_SYSTEM 3.4 "To-dos list", the row, and 4.8 "To-dos"). `TodoRowAnswersLogic`
+  works out what a row offers for its view's first ask with the row's content (P4): OK for a safe decision whose
+  recommendation is one of its options (`OwnerAsk.recommendedOption`; never the first option in its place) and Options
+  for one with options, Retry and Options for a failed start's retry, nothing for a run's ask (a safe question with its
+  card included: answering the run's own form inside a list cell waits for the to-do's page), an open ask or one
+  without a `risk` (an older manager's). `TodoRowAnswersLine` draws them in a packed `StackingButtonRow`; "OK:
+  ‹option›" or "OK" comes from `TodoRowAnswers.okWidth` (an estimate from the label's characters in ems of
+  `Theme.Level.secondary`'s size, a wide one an em, a capital 0.8) times `Theme.textScale` against
+  `Theme.Size.todoAnswerMax`, never measured. Options ⌄ sets the row's own `Row.optionsOpen` (one row at a time; it
+  folds when the row's ask goes) and `TodosListModel.cardUnfolded`, which `TodoListView` reads to bring the card's foot
+  above the foot toolbar when it fell under it (`TodoListSight.bottoms` against `TodoListEdges.floor`), and the row
+  draws the ask's `AskCard` under it. What this device did with an ask (`TodoAnswerMark`: chosen, with Undo while held;
+  answered elsewhere; not sure it went; Later; busy) is read for each row with an ask when the list reads the store
+  (`AskCardModel.mark`), so a row redraws when its own answer moves. A step's ask lifted onto its parent's row
+  (`step:<id>/…`, `OwnerAsk.step`) is kept by the step's round, so the tray, which lists the step itself, agrees.
+  - **Holding.** `AskCardModel` (one for the app, `.shared`; tests pass `AskCardDeps`) answers through
+    `DecisionAnswers`, the tray's engine, whose `Hold` (only while V1 is on) writes the answer to `TodoOutbox` as
+    `Write.answer(AskAnswer)` with the view's ask id, its round, the option or fixed answer and the words the row says
+    while it is held. The outbox holds it for `Theme.Motion.todoUndo` (`todoUndoAssistive` with VoiceOver or Switch
+    Control), sends it at once when the scene leaves the foreground, and again at launch with the same op id; an
+    answer has no reverse, so Undo works only while it is unsent. `TodoStore.write(.answer)` sends it through
+    `POST …/asks/{ask}/answer` (`APIClient.answerAsk`, the op id as `X-Persona-Op-Id`) while the hub lists `todo_asks`,
+    else `/accept` with the round or `/retry`; a 404 or 405 without the route's codes (`TodoAskRefusal.routeMissing`)
+    is a manager without the route, and today's route answers instead; a step's ask goes to the asks route on its
+    parent, which names it, and to today's routes on the step (`AskAnswer.step`). An answer none of whose sends began
+    is let go as `.elsewhere` when a read lists the row with a view that no longer lists the ask (`Standing.asks`),
+    at that read rather than when its window ends; with the row or its view missing (a manager reconnecting) it goes,
+    and one whose send began (a relaunch after it) goes again with its op id, whose receipt answers with the first
+    result. How a send ended (`TodoOutbox.outcome`): 409 `ask_stale` (and the accept route's bare 409), 404
+    `todo_not_found` or `ask_not_found` is answered elsewhere, said in place with no error haptic; a refusal the
+    assistant gave (4xx, a 5xx with `delivered: "none"` such as `accept_not_taken`) is dropped and said, since its
+    receipt answers a repeat the same; `delivered: "yes"` is taken; `delivered: "unknown"` (502 `send_in_doubt`), or
+    `TodoOutbox.tries` sends that ended unanswered, is `.inDoubt`: never sent again, never said as not sent, "Not sure
+    your answer went through" in place, the ask kept out of the numbers until the view moves. An answer kept past
+    `keepFor` that never left says "Couldn't send your answer" and gives its buttons back; one whose send began is
+    `.inDoubt` then, never said as not sent; one on a forgotten hub gives its buttons back quietly.
+    `DecisionAnswers.settled` (the outbox's `Deps.settled`) turns that into the round's state. The Needs You tray's
+    `DecisionRow` holds the same way while V1 is on, finding the view's ask id by the round (`TodoStore.askID`), and
+    sends its fixed answers at once through the asks route (`TodoStore.respond`); before it, it answers at once through
+    `/accept` as always.
+  - **Counting.** Every answer still in the outbox counts as given (`TodoOutbox.answering`, read by
+    `TodoCountsSource` through `TodoStore.V1.answering`, followed as `pending` is), from the tap on and after a
+    relaunch; one the hub took or found answered elsewhere joins `TodoCountsSource.answered`'s overlay until the view
+    stops listing the ask. So N drops once, in one recount, on the drawer and sidebar row, the folded Pages tally, the
+    Needs you header, the Filter's counts and the places, and comes back together if the answer is undone or refused.
+  - **Later and Don't handle.** Later is `AskCardModel.later` (that row, this app session): it writes nothing and
+    moves no number, so the tray still lists the decision and every place counts it once. Don't handle goes at once:
+    the asks route with `outcome: decline` while the hub lists `todo_asks` (a toast whose Undo sends `outcome: undo`
+    with the receipt), else, or where the manager lacks the route, `TasksStore.dismissDecision` (the to-do's own
+    review round only); its ask leaves the numbers on success. Discuss… is hidden until the to-do's composer can take
+    "Answer: …".
+  - **Line 2 for a run's plan or tool** says "‹run›: Plan awaiting approval" or "‹run›: Waiting for your approval"
+    (DESIGN_SYSTEM 5.6's titles), whatever the hub's `text`, since the row has no door.
+  - **Mock.** Under `MOCK_TODO_VIEW=1` the hello lists `todo_asks` (`MOCK_TODO_VIEW_ASKS=0` leaves it out, for today's
+    routes) and the asks route answers T01's decision and T03's retry with the hub's receipt and codes (400 for a
+    decision with no answer, as the hub's); each ask says its `risk` and `lockscreen`, the Widget's plan its card's id.
+    Tests: `AskCardModelTests` (both routes, a 405 falling back, Undo, 409 answered elsewhere, a 423 refusal, an answer
+    in doubt, a row or view missing at send time, a step's ask on today's routes, two answers held on one to-do,
+    Retry, Later, Don't handle and its fallback and Undo, the tray's fixed answers, the OK's words, the card's options
+    and compare line, what a row offers for each kind of ask), `DecisionAnswersHoldTests` (the tray holds on V1, old
+    hubs at once, the arm rule, answered elsewhere at the read during the hold, the foreground, the launch's same op id,
+    also after a send that may have landed),
+    `TodoCountsSourceTests.anAnswerHeldHereMovesEveryReaderInOneUpdate`, `scripts/mock/test_todo_view_mock.py` and the
+    UI suite `TodosV1AnswersTests` (OK drops N on the header, the Filter's Needs you, the drawer's row and the Pages
+    tally at once; the same answers on Today's and a project's list, OK there dropping the place's N;
+    `testAnswerFrames` shoots the frames, `testTrayFrames` the tray's decision row).
 - **Which page.** `TodosPlacePage` draws the V1 list while the gate is on, else today's `TodosView` (frozen), deciding
   once, when the page is made (`TodosPageChoice`): a hello that turns the gate on while To-dos is up (a manager that
   connects late), or while a to-do is pushed over it, never swaps it; the next time To-dos opens it is the V1 list. The
@@ -2445,9 +2555,12 @@ built in stages behind the hub's `todo_view`; this section grows with it.
   the entry, which leaves the table (at most 64: one more lets the oldest go without a state), while the cell keeps
   what it was told. Each cell is observed on its own, so a burst of other sends' receipts draws nothing. Receipts are
   feedback only: the HTTP answer, or the op id's receipt, stays authoritative, and the events are not replayed after a
-  reconnect. Nothing reads the cells yet: the to-do page's composer will, and the chats still show Processing after
-  the HTTP answer (`ChatSendFeedback`). `MOCK_TODO_VIEW` sends both (`docs/operations/testing.md`). Tests:
-  `SendReceiptsTests`; `SendReceiptsBurstTests` prints the main thread's time per event under a burst.
+  reconnect. Chats expect their `client_msg_id` before posting (`sendPending`), move `ChatSendFeedback` to Processing
+  on a trusted `message_send_state` receipt (tracking Send → Processing separately from execution, and ending
+  Processing on `failed`/`kept`/`unknown` without altering outbox durability), and keep the HTTP answer as the fallback
+  on older hubs or dropped sockets (#12773); the to-do page's composer will read `todo_send_state` cells.
+  `MOCK_TODO_VIEW` sends both (`docs/operations/testing.md`). Tests: `SendReceiptsTests`, `ChatSendFeedbackTests`;
+  `SendReceiptsBurstTests` prints the main thread's time per event under a burst.
 - **404 and 405.** An older hub answers 405 for `GET /api/v1/todos/{id}` and `GET /api/v1/todos/places` (the `PATCH` and
   `DELETE` routes of `/api/v1/todos/{id}` match the path) and 404 for the other new routes: `TodoNotThere` takes both
   as "not there". A 404 with `todo_not_found` is the to-do itself gone. `GET /api/v1/todos` answering 404 still hides
@@ -3573,3 +3686,33 @@ Clicking a worktree's title or branch opens its first direct Agent in the sideba
 Right-click a worktree title, branch or direct Agent row on Mac, or long-press it on iPhone, for the same worktree commands: Open Worktree, New Session, New Child Worktree, Copy Path, Copy Worktree Name and, when present, Open Parent Worktree. It uses that exact workspace as the initial code source and parent, including a nested or Agent-free container. The form can change either choice independently; a folder needs a Git code source. Successful creation refreshes the sidebar catalog and opens the existing New Session form for the new child using the server-acknowledged parent. All regions use the owning worktree's identity. An Agent row also retains its session commands. A title with one Agent offers those commands directly; with multiple Agents it offers named submenus so session actions have an explicit target. Each descendant keeps its own menu scope. The UI names these containers worktrees; protocol and accessibility identifiers retain their workspace names for compatibility.
 
 New Session also offers a searchable workspace picker, with full ancestor paths and an explicit Choose by Folder fallback. A chosen workspace sends its source ID and directory to the existing session-start route. New Child Worktree separates Code Source (the repository and base commit) from Parent Worktree (any Orca workspace on the same computer, including empty folders and other projects). On a phone, the selected parent's name has its own line above the ancestor path so a deep breadcrumb cannot hide the selected destination. The node advertises `choose_parent` before the client enables independent parent selection. With `automatic_name`, Create Worktree is ready without entering a branch or path on every supported engine. The native form keeps those overrides in Advanced, collapsed initially. An unnamed create sends `auto_name: true`. Orca receives a generated creature seed without a branch override and owns its prefix, retired-name/collision policy and first-work rename. Other supported hosts use a unique node-generated branch and directory through their existing creation route; subsequent naming follows the host’s capabilities. Explicit branch/path inputs retain their existing validation; older nodes keep the manual form. A created worktree appears through discovery even if the New Session form is cancelled before an Agent starts. Stale explicit launch targets and missing parents are refused rather than silently redirected.
+
+## Disk usage map (#14576)
+
+The contract is `docs/server/machine-usage-map.md`; the look and the interactions are `docs/design/DESIGN_SYSTEM.md`
+"Usage treemap".
+
+- Ways in: the Disk almost full chip on a computer's card and the Disk tile in its details open the map in reclaim mode
+  when the disk level is raised (the biggest reclaimable items are marked and listed as chips under a headline); a
+  banner in the details, shown while the disk is above normal, offers "See What's Using Space". The route is
+  `MachineUsageMapRoute` (registered next to `MachineDetailRoute`; on iPad it opens in the right column).
+- Wire models: `PersonaWire/MachineUsageMap.swift` (unknown enum values decode to a fallback). Calls:
+  `APIClient` "Disk usage map" (usage, trash / untrash / purge, the existing `POST /cleanup`, offload providers,
+  inventory, run, jobs).
+- `UsageMapModel` (`@Observable`, `Deps` for tests with `FakeHub`) polls while the hub is still measuring and only
+  while the page is visible (`.tabActiveTask(id:)`), keeps a zoom trail per side, the selection, the tint (kind or last
+  used), the providers and the inventory. Layout runs off the main thread (`TreemapLayout`, cached by node id, size and
+  depth). An offload that answers 409 `tool_install_required` asks a second, separate confirmation to install the tool;
+  the job is polled until it ends, then the map refreshes in place. Trash shows an Undo notice; Delete Permanently
+  is its own confirmation.
+- No provider: the cloud side's empty state links to Settings › Extensions. An older hub without the usage route shows
+  "Can't Show the Disk" with what to update.
+- Debug: `-tab settings -openMachines YES -openUsageMap <machine>` (or `reclaim:<machine>`). Mock: `MOCK_USAGE_MAP=1`
+  (`old` answers as a hub without the route). UI test: `UsageMapUITests` with
+  `TEST_RUNNER_PERSONA_USAGE_MAP_HUB=http://127.0.0.1:<port>`.
+
+## Model profiles
+
+Settings › Models (`ModelConfigurationView`, `ModelProfilesViews.swift`, `ModelProfilesModel.swift`, `apple/Shared/ModelProfiles.swift`) adds **Model Profiles** backed by `/api/v1/model-profiles` (hidden cleanly when an older hub returns 404). Each profile row opens a sheet (`ModelProfileSheet`) to inspect its Agent presets, purpose bindings, managed launcher overrides, and any fields that differ from the current live configuration (`changes`). Both profile detail (`ModelProfileDetailView`) and the interactive editor (`ModelProfileEditorView`) expose **Update from current configuration** (`PUT /api/v1/model-profiles/{id}` with minimal `{ revision, name, description?, capture: true }`, preserving Agent presets and handling 409 Conflict reload recovery).
+
+When applying a profile with zero drift (`changes` empty and no unsaved drift on the active profile), **Apply Profile** applies directly without an extra confirmation screen. When drift exists, `ModelProfileApplyConfirmView` names every affected purpose and launcher field (including target values such as Follow default or Clear), highlights unsaved active-profile drift, and offers **Capture current into `<active>` first** (`PUT capture: true` on the active profile followed by `POST apply` on the target inside one write-fenced flow — aborting apply if capture fails and keeping captured state if apply fails), **Apply directly**, or **Cancel** (re-applying a drifted active profile also offers **Update from current configuration**). Validation and save/apply errors plus 409 Reload controls sit pinned inside the bottom action bars directly beside Save / Apply (and at the top of `ModelPurposeEditorView` next to its toolbar Save button), and profile saves omit blank optional fields and default `"standard"` tier speed for cross-version hub compatibility while hiding empty `permission_mode` pickers on older hubs whose launcher purposes omit `permission_mode` in `fields`. Regression coverage: `ModelProfilesModelTests`.
