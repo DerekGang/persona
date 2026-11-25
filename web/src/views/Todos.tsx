@@ -84,7 +84,7 @@ import { cancellationReason, formatAgentSource, formatTodoContext } from "../lib
 import { useCachedDirectionNames } from "../lib/direction-names";
 import { directionTitle, groupsByDirection, refreshDirectionTree, useDirectionTree, type Direction } from "../lib/direction-tree";
 import { DirectionCountsText } from "./DirectionMarks";
-import { FOLDED_SECTIONS, TRIAGE_SECTIONS, checksAsOpen, countsAsOpen, lastActivity, openMergePRs, sectionStartsFolded, supersededFailedStarts, triage, triageTodos, type OwnerNeed, type TriageGroup, type TriageResult, type TriageRule, type TriageSection } from "../lib/todo-triage";
+import { FOLDED_SECTIONS, TRIAGE_SECTIONS, checksAsOpen, countsAsOpen, lastActivity, openMergePRs, sectionStartsFolded, supersededFailedStarts, triage, triageTodos, type OwnerNeed, type Triage, type TriageGroup, type TriageResult, type TriageRule, type TriageSection } from "../lib/todo-triage";
 import { orderWaitGroups } from "../lib/task-wait";
 import { viewDrawOn } from "../features/todos/model/view-gates";
 import { drawnFromView, openAsDrawn } from "../features/todos/model/view-triage";
@@ -106,8 +106,15 @@ import type { MenuItem } from "../ui/menu-model";
 import { foldGoalTasks, type GoalFoldResult, type GoalSummary } from "../lib/todo-goal-fold";
 import { findSelectedBlocker, matchesSharedBlocker, parseSharedBlockers } from "../lib/todo-shared-blockers";
 import { SharedBlockersStrip } from "../components/SharedBlockersStrip";
-import { reorganizeDirectionOptions, reorganizeTodos, type TodoReorganizeRequest } from "../lib/todo-reorganize";
+import {
+  reorganizeDirectionOptions,
+  reorganizeTodos,
+  resolveDirectionSections,
+  type ReorganizeDirectionOption,
+  type TodoReorganizeRequest,
+} from "../lib/todo-reorganize";
 import { BatchReorganizeBar } from "../components/BatchReorganizeBar";
+import { TodoDirectionPicker } from "../components/TodoDirectionPicker";
 import {
   classifyTodoDetailTemplate,
   resolveWorkGoalActions,
@@ -132,6 +139,7 @@ import { stateName } from "../lib/state-labels";
 import { Empty, Segmented, Tag } from "./assistant/parts";
 import { OfflineState, useShownOffline } from "./ManagerParts";
 import { TodoCalendar, type CalendarSlot } from "./TodoCalendar";
+import { TodoBoard } from "./TodoBoard";
 import { dayKey, isCalendarMode, parseDayKey, startOfDay, type CalendarMode } from "../lib/todo-calendar";
 import type { Route } from "../lib/router";
 import { LatestReport, ReviewBadge } from "./assistant/Supervision";
@@ -194,6 +202,10 @@ function calendarRoute(mode: CalendarMode, day: number, id?: string): Route {
   return { name: "todos", view: "calendar", mode, date: dayKey(day), ...(id ? { id } : {}) };
 }
 
+function boardRoute(id?: string): Route {
+  return { name: "todos", view: "board", ...(id ? { id } : {}) };
+}
+
 export function TodosView({
   selectedId,
   view,
@@ -202,8 +214,8 @@ export function TodosView({
   onToggleSidebar,
 }: {
   selectedId?: string;
-  /** The calendar (#2029) rather than the list; its mode and day, from the address. */
-  view?: "calendar";
+  /** The calendar (#2029) or read-only progress board (#12713) rather than the list; calendar mode/day from the address. */
+  view?: "calendar" | "board";
   mode?: CalendarMode;
   date?: string;
   onToggleSidebar?: () => void;
@@ -252,6 +264,10 @@ export function TodosView({
   const [showReleased, setShowReleased] = useState(false);
   // The calendar (#2029): the address says which mode and day; a click on its empty axis opens New To-Do due there.
   const calendarOn = view === "calendar";
+  // Direct view switches draw immediately; the address then becomes authoritative again (including browser Back).
+  const [boardOverride, setBoardOverride] = useState<boolean>();
+  const boardOn = view === "board" || (!view && boardOverride === true);
+  useEffect(() => setBoardOverride(undefined), [view]);
   const storedMode = pref(MODE_KEY);
   const calendarMode: CalendarMode = routeMode ?? (isCalendarMode(storedMode) ? storedMode : "week");
   const anchor = parseDayKey(date) ?? startOfDay(Date.now());
@@ -259,7 +275,13 @@ export function TodosView({
   const [newSlot, setNewSlot] = useState<CalendarSlot | undefined>();
   // /todos with no view: the one this browser was last on
   useEffect(() => {
-    if (!view && !selectedId && pref(VIEW_KEY) === "calendar") navigate(calendarRoute(calendarMode, startOfDay(Date.now())), true);
+    if (view || selectedId) return;
+    const saved = pref(VIEW_KEY);
+    if (saved === "calendar") navigate(calendarRoute(calendarMode, startOfDay(Date.now())), true);
+    if (saved === "board") {
+      setBoardOverride(true);
+      navigate(boardRoute(), true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, selectedId]);
   // on the calendar a new to-do is due on the day shown
@@ -267,15 +289,17 @@ export function TodosView({
     setNewSlot(calendarOn ? { day: anchor } : undefined);
     setNewOpen(true);
   };
-  const showView = (next: "list" | "calendar") => {
+  const showView = (next: "list" | "calendar" | "board") => {
+    setBoardOverride(next === "board");
     setPref(VIEW_KEY, next);
-    navigate(next === "calendar" ? calendarRoute(calendarMode, startOfDay(Date.now()), selectedId) : { name: "todos", ...(selectedId ? { id: selectedId } : {}) });
+    navigate(next === "calendar" ? calendarRoute(calendarMode, startOfDay(Date.now()), selectedId) : next === "board" ? boardRoute(selectedId) : { name: "todos", ...(selectedId ? { id: selectedId } : {}) });
   };
 
-  // Sync selectedId from URL
+  // Sync selectedId from URL; on Board, browser Back also closes the wide detail beside it.
   useEffect(() => {
     if (selectedId) setActiveId(selectedId);
-  }, [selectedId]);
+    else if (boardOn) setActiveId(undefined);
+  }, [selectedId, boardOn]);
   // A link to a to-do the list doesn't have (deleted, or an old link): said once, and the address loses it, so another
   // to-do is not shown under it (web usability audit item 42). Not while the list can't tell: the current assistant
   // offline (the merged list leaves its to-dos out) or a hub without to-dos (an empty list); the link is kept for later.
@@ -283,7 +307,7 @@ export function TodosView({
   useEffect(() => {
     if (!linkGone) return;
     toast(t("not-found.todo_gone"));
-    navigate(calendarOn ? calendarRoute(calendarMode, anchor) : { name: "todos" }, true);
+    navigate(boardOn ? boardRoute() : calendarOn ? calendarRoute(calendarMode, anchor) : { name: "todos" }, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per link that is gone
   }, [linkGone]);
 
@@ -441,6 +465,23 @@ export function TodosView({
     }
   }, []);
 
+  // Single-item direction change from TodoDetail under todos_v2 (#15653).
+  const applyDetailReorganize = useCallback(async (req: TodoReorganizeRequest): Promise<void> => {
+    const res = await reorganizeTodos(req);
+    await refreshTodos();
+    if (req.direction_id !== undefined) {
+      void refreshDirectionTree().catch(() => {});
+    }
+    const updatedCount = res.updated?.length ?? req.ids.length;
+    const transferredCount = res.transferred_ids?.length ?? 0;
+    toast(
+      transferredCount > 0
+        ? t("todos.reorganize_success_transferred", { count: updatedCount, transferred: transferredCount })
+        : t("todos.reorganize_success", { count: updatedCount }),
+      "ok",
+    );
+  }, []);
+
   const chooseFilter = (f: TodoListFilter) => {
     setPref(FILTER_KEY, f);
     setListFilter(f);
@@ -504,6 +545,31 @@ export function TodosView({
         }
     return { row, open };
   }, [triaged, fromView]);
+
+  // Board shows every open to-do, independently of an invisible List search or due-date filter. It uses the same
+  // placement rule, including Developing Persona's hub-view path, and the page's ordinary row order.
+  const boardTriaged = useMemo(() => {
+    if (!boardOn) return undefined;
+    const result = orderWaitGroups(triageTodos(todos, lookup, Date.now(), restored, { superseded }), Date.now());
+    return fromView ? drawnFromView(result, Date.now()) : result;
+  }, [boardOn, todos, lookup, restored, superseded, tick, fromView]);
+  const boardProjection = useMemo(() => {
+    const open = new Set<string>();
+    const triages = new Map<string, Triage>();
+    if (boardTriaged) {
+      for (const section of TRIAGE_SECTIONS) {
+        for (const group of boardTriaged.sections[section]) {
+          for (const member of group.members) {
+            const placement = group.triage.get(member.id)!;
+            triages.set(member.id, placement);
+            if ((fromView ? openAsDrawn : countsAsOpen)(member, placement)) open.add(member.id);
+          }
+        }
+      }
+    }
+    return { todos: sortTodos(todos.filter((todo) => open.has(todo.id)), lookup), triages };
+  }, [boardTriaged, todos, lookup, fromView]);
+
   const filteredUncompleted = useSteady(
     useMemo(() => sortTodos(todos.filter((td) => {
       const sec = placed.row.get(td.id);
@@ -567,14 +633,19 @@ export function TodosView({
   );
   // The tree lists only open to-dos (server/internal/assistant/direction_tree.go, the same countsAsOpen rule), so a
   // direction holds the open ones it lists: one ticked here leaves at once, not when the tree's push comes.
+  // Under todos_v2 (#15653), explicit `todo.direction_id` takes precedence over runtime supervision membership so
+  // reorganizing updates the direction grouping immediately without interrupting running Agents.
   const directionSections = useMemo(() => {
     if (grouping !== "direction" || !byDirection) return [];
-    const open = new Map(filteredUncompleted.filter((td) => placed.open.has(td.id)).map((td) => [td.id, td]));
-    return directionTree.directions
-      .map((d) => ({ d, todos: (d.tasks ?? []).map((task) => open.get(task.id)).filter((td): td is Todo => !!td) }))
-      .filter((g) => g.todos.length > 0)
-      .map(({ d, todos }) => ({ d, todos, title: directionTitle(d, leaderTitles?.find((c) => c.session_id === d.id)?.title) }));
-  }, [grouping, byDirection, directionTree, filteredUncompleted, placed, leaderTitles]);
+    const openTodos = filteredUncompleted.filter((td) => placed.open.has(td.id));
+    return resolveDirectionSections({
+      tree: directionTree,
+      openTodos,
+      todosV2,
+      resolveDirectionName: (d) => directionTitle(d, leaderTitles?.find((c) => c.session_id === d.id)?.title),
+      resolveFallbackName: directionLabel,
+    });
+  }, [grouping, byDirection, directionTree, filteredUncompleted, placed, todosV2, leaderTitles, directionLabel]);
   // open to-dos no 常驻 section lists: the hub nests a worker's to-do under its leader's Agent instead of listing it
   // (server/internal/assistant/direction_tree.go), so the page says how many and where to see them rather than hide them
   const directionUnlisted = useMemo(() => {
@@ -635,7 +706,17 @@ export function TodosView({
     setTodoSeen(id, true, after).catch(failed);
     toast(t("todos.seen_moved"), "ok", { label: t("lib-agents.undo"), run: () => void setTodoSeen(id, false).catch(failed) });
   }, []);
-  const opened = seenOn && selectedId !== undefined ? todos.find((td) => td.id === selectedId) : undefined;
+  // Board is read-only: track a to-do opened while on Board so closing it (even via a URL change that drops
+  // view=board before selectedId clears) never arms or fires the automatic seen-on-leave write.
+  const boardOpenedId = useRef<string | undefined>(undefined);
+  if (boardOn && selectedId !== undefined) {
+    boardOpenedId.current = selectedId;
+    if (seenOnLeave.current === selectedId) seenOnLeave.current = undefined;
+  } else if (!boardOn && selectedId !== boardOpenedId.current) {
+    boardOpenedId.current = undefined;
+  }
+  const openedFromBoard = boardOn || (selectedId !== undefined && boardOpenedId.current === selectedId);
+  const opened = seenOn && !openedFromBoard && selectedId !== undefined ? todos.find((td) => td.id === selectedId) : undefined;
   const openedJustDone = opened !== undefined && triage(opened, lookup, Date.now(), restored.get(opened.id) ?? 0, superseded.has(opened.id)).section === "just_done";
   useEffect(() => {
     if (openedJustDone && !decided.current.has(selectedId!)) seenOnLeave.current = selectedId;
@@ -643,7 +724,7 @@ export function TodosView({
   useEffect(() => {
     const id = selectedId;
     return () => {
-      if (id === undefined || seenOnLeave.current !== id) return;
+      if (id === undefined || seenOnLeave.current !== id || boardOpenedId.current === id) return;
       seenOnLeave.current = undefined;
       void setTodoSeen(id, true).catch(() => {}); // it stays in Just finished, as if never opened
     };
@@ -660,7 +741,7 @@ export function TodosView({
       if (found) return found;
     }
     // taking turns, nothing is open until a row is: no first row stands in, marked current with its detail loading unseen
-    if (requestMode || !split) return undefined;
+    if (requestMode || boardOn || !split) return undefined;
     if (byStatus) {
       // the first row of an open section; none rather than one that would unfold a folded section (Shelved, Done)
       for (const sec of TRIAGE_SECTIONS) if (!sectionStartsFolded(sec, displayTriaged.sections[sec], tick) && displayTriaged.sections[sec].length) return displayTriaged.sections[sec][0].lead;
@@ -669,7 +750,7 @@ export function TodosView({
     // by 常驻: the first row shown (a direction's, else an unfolded status section's below them), else history
     if (grouping === "direction") return directionSections[0]?.todos[0] ?? directionRest.find((s) => !FOLDED_SECTIONS.has(s.sec))?.groups[0].lead ?? filteredCompleted[0] ?? filteredCancelled[0];
     return filteredUncompleted[0] ?? filteredCompleted[0] ?? filteredCancelled[0];
-  }, [activeId, selectedId, todos, filteredUncompleted, filteredCompleted, filteredCancelled, byStatus, requestMode, split, displayTriaged, grouping, directionSections, directionRest, tick]);
+  }, [activeId, selectedId, todos, filteredUncompleted, filteredCompleted, filteredCancelled, byStatus, requestMode, boardOn, split, displayTriaged, grouping, directionSections, directionRest, tick]);
 
   // The to-do open beside the calendar: the address's, while it is there.
   const selectedTodo = calendarOn && selectedId ? todos.find((td) => td.id === selectedId) : undefined;
@@ -702,15 +783,15 @@ export function TodosView({
       if (id === selectedId) return; // already this entry (a deep link stays a deep link)
       pushedId.current = id;
       fromList.current = { id, top: listBox.current?.scrollTop ?? 0 };
-      navigate(`/todos?id=${encodeURIComponent(id)}`);
+      navigate(boardOn ? boardRoute(id) : `/todos?id=${encodeURIComponent(id)}`);
     },
-    [selectedId],
+    [selectedId, boardOn],
   );
   const backToList = () => {
     if (selectedId && pushedId.current === selectedId) {
       pushedId.current = undefined;
       history.back();
-    } else navigate("/todos", true);
+    } else navigate(boardOn ? boardRoute() : "/todos", true);
   };
   const back = useRef(backToList);
   back.current = backToList;
@@ -752,10 +833,10 @@ export function TodosView({
     return () => removeEventListener("keydown", onKey);
   }, [detailOnNarrow]);
 
-  // "By request": the detail closes and the graph has the page again
+  // "By request" and Board: the detail closes and the graph or board has the page again
   const closeDetail = () => {
     setActiveId(undefined);
-    navigate("/todos", true);
+    navigate(boardOn ? boardRoute() : "/todos", true);
   };
 
   // `open`: the row's checkbox shows it open (`checksAsOpen`): a failed start waiting on the owner is ticked to close it
@@ -847,7 +928,7 @@ export function TodosView({
       setActiveId(undefined);
       pushedId.current = undefined;
       // replace: Back must not land on ?id=<the deleted todo>
-      navigate(calendarOn ? calendarRoute(calendarMode, anchor) : { name: "todos" }, true);
+      navigate(boardOn ? boardRoute() : calendarOn ? calendarRoute(calendarMode, anchor) : { name: "todos" }, true);
     }
     toast(t("todos.deleted"), "ok");
     // the rest of the page catches up in the background; a failed refresh leaves the list as dropped, the next push fixes it
@@ -863,7 +944,7 @@ export function TodosView({
           <div className={cx("flex gap-2", todosV2 ? "items-center" : "items-baseline")}>
             <h1 className="text-[16px] font-semibold whitespace-nowrap text-ink">{t("todos.title")}</h1>
             {/* the counts once the list has its to-dos (audit item 83): not while it loads, nor after an empty failed read */}
-            {(todosLoaded || todos.length > 0) && !(todos.length === 0 && todosError) && (
+            {!boardOn && (todosLoaded || todos.length > 0) && !(todos.length === 0 && todosError) && (
               todosV2 ? (
                 (() => {
                   const needsYouCount = sectionSize(triageAll, "waiting");
@@ -914,10 +995,11 @@ export function TodosView({
           )}
           <Segmented
             label={t("todos.view_label")}
-            value={calendarOn ? "calendar" : "list"}
+            value={boardOn ? "board" : calendarOn ? "calendar" : "list"}
             options={[
               { v: "list", label: t("todos.view_list") },
               { v: "calendar", label: t("todos.view_calendar") },
+              { v: "board", label: t("todos.view_board") },
             ]}
             onChange={showView}
             compact
@@ -1002,13 +1084,13 @@ export function TodosView({
           // the edge parts the list from the detail beside it; on a phone the list is the whole page and has none
           className={cx(
             "flex w-full flex-col border-line",
-            requestMode ? "min-w-0 md:flex-1" : todosV2 ? "shrink-0 md:w-[356px] lg:w-[368px]" : "shrink-0 md:w-[380px] lg:w-[400px]",
-            (!requestMode || activeTodo) && "md:border-r",
+            (requestMode || boardOn) ? "min-w-0 md:flex-1" : todosV2 ? "shrink-0 md:w-[356px] lg:w-[368px]" : "shrink-0 md:w-[380px] lg:w-[400px]",
+            (!(requestMode || boardOn) || activeTodo) && "md:border-r",
             detailOnNarrow && "max-md:hidden",
           )}
         >
-          {/* Search Bar / Compact Toolbar */}
-          {todosV2 ? (
+          {/* Search Bar / Compact Toolbar (List only; Board has no hidden filter) */}
+          {!boardOn && (todosV2 ? (
             <div className="flex items-center gap-1.5 px-2.5 py-2" data-testid="todos-v2-toolbar">
               {!requestMode && (
                 <>
@@ -1101,15 +1183,15 @@ export function TodosView({
                 compact
               />
             </div>
-          )}
-          {todosV2 && !requestMode && sharedBlockers.length > 0 && (
+          ))}
+          {!boardOn && todosV2 && !requestMode && sharedBlockers.length > 0 && (
             <SharedBlockersStrip
               blockers={sharedBlockers}
               selectedKey={activeBlocker?.key ?? null}
               onSelect={setSelectedBlockerKey}
             />
           )}
-          {todosV2 && !requestMode && reorganizeMode && (
+          {!boardOn && todosV2 && !requestMode && reorganizeMode && (
             <BatchReorganizeBar
               todos={todos}
               visibleIds={visibleReorganizeIds}
@@ -1126,7 +1208,25 @@ export function TodosView({
           )}
 
           {/* List Content */}
-          {requestMode ? (
+          {boardOn ? (
+            <TodoListScroller box={listBox}>
+              {!todosLoaded && todos.length === 0 ? (
+                <div className="flex justify-center py-16" data-testid="todos-loading"><Loading /></div>
+              ) : todos.length === 0 && todosError ? (
+                <Empty
+                  icon="todo"
+                  title={t("todos.load_failed")}
+                  action={<Button tone="secondary" icon="retry" busy={retrying} onClick={() => void retryTodos()}>{t("todos.retry")}</Button>}
+                >
+                  {todosError}
+                </Empty>
+              ) : offline && todos.length === 0 ? (
+                <OfflineState offline={offline} ring="ring-surface" className="py-14" />
+              ) : (
+                <TodoBoard todos={boardProjection.todos} lookup={lookup} triages={boardProjection.triages} projectName={projectName} tick={tick} onOpen={openFromList} />
+              )}
+            </TodoListScroller>
+          ) : requestMode ? (
             <Suspense fallback={<div className="flex justify-center py-16"><Loading /></div>}>
               <TodoRequestGraph todos={todos} lookup={lookup} machines={machines} selectedId={activeTodo?.id} onOpenTodo={openFromList} />
             </Suspense>
@@ -1373,9 +1473,9 @@ export function TodosView({
           ref={detailColumn}
           data-testid="todos-detail-column"
           data-narrow-shown={detailOnNarrow || undefined}
-          className={cx("min-h-0 flex-1 flex-col overflow-y-auto", requestMode && !activeTodo ? "md:hidden" : "md:flex", requestMode && "md:w-[440px] md:flex-none lg:w-[520px]", detailOnNarrow ? "flex" : "hidden")}
+          className={cx("min-h-0 flex-1 flex-col overflow-y-auto", (requestMode || boardOn) && !activeTodo ? "md:hidden" : "md:flex", (requestMode || boardOn) && "md:w-[440px] md:flex-none lg:w-[520px]", detailOnNarrow ? "flex" : "hidden")}
         >
-          {requestMode && (
+          {(requestMode || boardOn) && (
             <div className="hidden shrink-0 justify-end px-2 pt-2 md:flex">
               <IconButton icon="x" label={t("todos.calendar_close")} onClick={closeDetail} />
             </div>
@@ -1416,6 +1516,8 @@ export function TodosView({
                     activeTodo.direction_id
                   : undefined
               }
+              directions={todosV2 ? reorganizeDirections : undefined}
+              onReorganizeDirection={todosV2 ? applyDetailReorganize : undefined}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center text-[13px] text-ink-3">
@@ -3376,6 +3478,8 @@ function TodoDetail({
   parentTodo,
   childTodos = [],
   directionName,
+  directions = [],
+  onReorganizeDirection,
 }: {
   todo: Todo;
   owner: string;
@@ -3397,6 +3501,8 @@ function TodoDetail({
   parentTodo?: Todo;
   childTodos?: readonly Todo[];
   directionName?: string;
+  directions?: readonly ReorganizeDirectionOption[];
+  onReorganizeDirection?: (req: TodoReorganizeRequest) => Promise<void>;
 }) {
   const title = useTodoField({
     remote: todo.title, owner, allowEmpty: false,
@@ -3415,6 +3521,13 @@ function TodoDetail({
   // Under todos_v2 (#14851), all right-pane sections including participated history start expanded by default.
   const [releasedOpenV2, setReleasedOpenV2] = useState(true);
   const releasedVisible = todosV2 === true ? releasedOpenV2 : showReleased;
+  // Single-item direction picker strictly gated behind todos_v2 (#15653).
+  const [directionPickerOpen, setDirectionPickerOpen] = useState(false);
+  const canChangeDirection =
+    todosV2 === true &&
+    Boolean(onReorganizeDirection) &&
+    (directions.length > 0 || Boolean(todo.direction_id));
+  const showDirectionPicker = canChangeDirection && directionPickerOpen;
 
   const template = useMemo(
     () => (todosV2 === true ? classifyTodoDetailTemplate(todo, childTodos.length, { repositoryCount }) : undefined),
@@ -3566,7 +3679,32 @@ function TodoDetail({
                 </span>
               </>
             )}
+            {canChangeDirection && (
+              <Button
+                tone="quiet"
+                size="sm"
+                icon="folder"
+                expanded={showDirectionPicker}
+                testId="todo-detail-change-direction"
+                onClick={() => setDirectionPickerOpen((v) => !v)}
+                className="ml-auto h-6 shrink-0 border border-line bg-surface px-2 text-label whitespace-nowrap text-ink-2 hover:bg-hover"
+              >
+                {t("todos.detail_change_direction")}
+              </Button>
+            )}
           </div>
+          {showDirectionPicker && onReorganizeDirection && (
+            <TodoDirectionPicker
+              key={`${todo.id}:${todo.direction_id ?? ""}`}
+              todoId={todo.id}
+              currentDirectionId={todo.direction_id}
+              currentDirectionLabel={directionName}
+              childCount={childTodos.length}
+              directions={directions}
+              onApply={onReorganizeDirection}
+              onClose={() => setDirectionPickerOpen(false)}
+            />
+          )}
           <div
             data-testid="todo-detail-status-summary"
             aria-label={t("todos.detail_status_summary_region")}
@@ -3632,6 +3770,19 @@ function TodoDetail({
           placeholder={t("todos.title_placeholder")}
           className="min-w-0 flex-1 bg-transparent text-[22px] font-bold text-ink outline-none transition-colors focus:border-b focus:border-accent"
         />
+        {!isWorkGoalV2 && canChangeDirection && (
+          <Button
+            tone="quiet"
+            size="sm"
+            icon="folder"
+            expanded={showDirectionPicker}
+            testId="todo-detail-change-direction"
+            onClick={() => setDirectionPickerOpen((v) => !v)}
+            className="h-7 shrink-0 border border-line bg-surface px-2 text-label whitespace-nowrap text-ink-2 hover:bg-hover"
+          >
+            {t("todos.detail_change_direction")}
+          </Button>
+        )}
         <IconButton icon="more" label={t("todos.more_options")} onClick={menu.open} active={Boolean(menu.anchor)} />
         {menu.anchor && (
           <Menu
@@ -3650,6 +3801,20 @@ function TodoDetail({
           />
         )}
       </div>
+      {!isWorkGoalV2 && showDirectionPicker && onReorganizeDirection && (
+        <div className="mt-2.5">
+          <TodoDirectionPicker
+            key={`${todo.id}:${todo.direction_id ?? ""}`}
+            todoId={todo.id}
+            currentDirectionId={todo.direction_id}
+            currentDirectionLabel={directionName}
+            childCount={childTodos.length}
+            directions={directions}
+            onApply={onReorganizeDirection}
+            onClose={() => setDirectionPickerOpen(false)}
+          />
+        </div>
+      )}
 
       {/* Meta Line */}
       <div className="mt-2.5 flex flex-wrap items-center gap-2.5 text-[12.5px] text-ink-2">

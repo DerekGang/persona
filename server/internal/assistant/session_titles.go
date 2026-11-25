@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/nwverse/persona/server/internal/assistant/fleetview"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/transcript"
 )
@@ -48,15 +49,6 @@ func (s *Service) feishuDirection(ctx context.Context, t Todo, names map[string]
 	return "[Persona] "
 }
 
-// feishuAgentPlace identifies the session even when the node supplied no title.
-func (s *Service) feishuAgentPlace(ctx context.Context, ix proto.Interaction) (place, secondary string) {
-	agent, machine, secondary := s.feishuAgentPlaceParts(ctx, ix)
-	if machine == "" {
-		return agent, secondary
-	}
-	return agent + " · " + machine, secondary
-}
-
 // feishuAgentPlaceParts is feishuAgentPlace's parts: the agent, its computer ("" when it says none), and the session's
 // other name when the agent goes by its herdr tab name.
 func (s *Service) feishuAgentPlaceParts(ctx context.Context, ix proto.Interaction) (agent, machine, secondary string) {
@@ -75,7 +67,7 @@ func (s *Service) feishuAgentPlaceParts(ctx context.Context, ix proto.Interactio
 	}
 	if agent == "" && ix.Kind == proto.IxScreen {
 		if listed {
-			agent = agentTitle(&sess, 60)
+			agent = fleetview.AgentTitle(sessionTitle(&sess), 60)
 		}
 		if agent == "" || agent == "." {
 			agent = short(ix.SessionID)
