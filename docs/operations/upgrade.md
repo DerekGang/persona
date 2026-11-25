@@ -35,9 +35,9 @@ The [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibi
    and any native push or Live Activity behavior the owner uses.
 3. **Plan recovery before the restart.** A direct deploy can restart an older hub when its service or socket changes or no compatible edge is running.
    Keep the previous binaries and unit files ready for manual recovery on that path. The [hub update and rollback guide](hub-update.md) covers
-   the updater's own rollback. Keep the shared manager tables while a return to a build from before the split is an option. That build reads
-   the copy from the time of the move. Later manager writes live in the separate database. Restore matching databases, state and keys together
-   for a consistent rollback to the backup point.
+   the updater's own rollback. Keep the shared manager tables if you may return to a build from before the built-in manager gained its
+   own database. That build reads the shared copy from the time of the move. A later build that supports the manager's own database still
+   uses it even if the hub starts the manager as a child. Restore matching databases, state and keys together for a consistent rollback.
 4. **Update in stages.** Start with the hub and any separate managers used by it, then update the nodes and Persona Link using their supported
    update paths. Check the hub's health, manager roster and connected computers after each stage.
 5. **Check the built-in manager's first start.** If it still shares the hub's database and can provision its own, the new manager copies its data once
