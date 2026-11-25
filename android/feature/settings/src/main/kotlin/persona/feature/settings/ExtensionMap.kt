@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,6 +110,25 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
     var stopID by remember(item.key) { mutableStateOf<String?>(null) }
     var scale by remember(item.key) { mutableStateOf(1f) }
     var pan by remember(item.key) { mutableStateOf(Offset.Zero) }
+    // A keyless map is reused by lazy lists and live updates. When its routes are replaced by an unrelated set, the
+    // previous full-screen view, route choice, stop, zoom and pan do not belong to the new map: start from its declared
+    // camera again. A map that keeps or adds its routes (a live update) keeps the owner's interaction (review P2).
+    val routeIDs = routes.map { it.id }
+    val markerIDs = markers.map { it.id }
+    var priorRouteIDs by remember(item.key) { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(item.key, routeIDs, markerIDs) {
+        val replaced = priorRouteIDs.isNotEmpty() && routeIDs.isNotEmpty() && routeIDs.none { it in priorRouteIDs }
+        val chosenGone = chosenRouteID != null && routeIDs.isNotEmpty() && chosenRouteID !in routeIDs
+        val stopGone = stopID != null && markerIDs.isNotEmpty() && stopID !in markerIDs
+        if (replaced || chosenGone || stopGone) {
+            if (replaced) expanded = false
+            chosenRouteID = null
+            stopID = null
+            scale = 1f
+            pan = Offset.Zero
+        }
+        priorRouteIDs = routeIDs
+    }
     val selectedRoute = routes.firstOrNull { it.id == chosenRouteID } ?: routes.firstOrNull { it.selected == true } ?: routes.firstOrNull()
     val routeID = selectedRoute?.id
     val markerColors = markers.map { marker ->

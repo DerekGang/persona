@@ -131,4 +131,28 @@ class ExtensionMapShotsTest {
         rule.onNode(cover).assertDoesNotExist()
         rule.runOnIdle { assertEquals("https://example.com/route", opened) }
     }
+
+    @Test fun aReplacedKeylessMapStartsFromItsOwnRouteAndCamera() {
+        val first = ExtensionMapCoordinate(24.45, 118.06)
+        val second = ExtensionMapCoordinate(24.46, 118.08)
+        fun route(id: String) = ExtensionMapRoute(id, id, points = listOf(first, second))
+        val one = ExtensionViewItem(type = "map", title = "One", alt = "One", routes = listOf(route("a"), route("b")))
+        val two = ExtensionViewItem(type = "map", title = "Two", alt = "Two", routes = listOf(route("x"), route("y")))
+        var shown by mutableStateOf(one)
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true) {
+                ExtensionMap(shown, ExtensionViewState(), ExtensionViewHandle({ _, _ -> }, { _, _ -> }, {}, {}))
+            }
+        }
+        rule.onNodeWithTag("extension-map-canvas").performClick()
+        val cover = hasTestTag("extension-map-full-screen")
+        rule.onNode(hasTestTag("extension-map-route-b") and hasAnyAncestor(cover))
+            .performScrollTo().performClick().assertIsSelected()
+        rule.onNodeWithText("Zoom in").performClick()
+        rule.runOnIdle { shown = two }
+        rule.onNode(cover).assertDoesNotExist()
+        rule.onNodeWithTag("extension-map-canvas").performClick()
+        rule.onNode(hasTestTag("extension-map-route-x") and hasAnyAncestor(cover)).assertIsSelected()
+        rule.onNode(hasTestTag("extension-map-route-b") and hasAnyAncestor(cover)).assertDoesNotExist()
+    }
 }
