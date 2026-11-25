@@ -97,11 +97,17 @@ class ShardTests(unittest.TestCase):
 
     def test_workflow_lanes_and_cache_write_policy(self):
         workflow = (ROOT / ".github/workflows/android-test.yml").read_text()
+        self.assertIn("permissions:\n  actions: read\n  contents: read", workflow)
         match = re.search(r"lane: \[([^\]]+)\]", workflow)
         self.assertIsNotNone(match)
         self.assertEqual([value.strip() for value in match[1].split(",")], list(CI_LANES))
         self.assertIn("fail-fast: false", workflow)
         self.assertIn("--lane '${{ matrix.lane }}' --profile", workflow)
+        self.assertIn("id: checks", workflow)
+        self.assertIn("id: evidence", workflow)
+        self.assertIn("CHECKS_OUTCOME: ${{ steps.checks.outcome }}", workflow)
+        self.assertIn("EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}", workflow)
+        self.assertIn("scripts/ci/android_result.py bind", workflow)
         self.assertIn("cache-read-only: ${{ github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main' }}", workflow)
         restore = workflow.split("- name: Restore public Robolectric runtime dependencies", 1)[1].split("- name:", 1)[0]
         save = workflow.split("- name: Save public Robolectric runtime dependencies", 1)[1].split("- name: Upload", 1)[0]
@@ -119,6 +125,16 @@ class ShardTests(unittest.TestCase):
             self.assertIn("~/.m2/repository/org/robolectric/nativeruntime-dist-compat", step)
         self.assertNotIn("continue-on-error", workflow)
         self.assertIn("timeout-minutes: 90", workflow)
+        aggregate = workflow.split("\n  result:\n", 1)[1]
+        self.assertIn("needs: android", aggregate)
+        self.assertIn("if: always()", aggregate)
+        self.assertIn("gh run download", aggregate)
+        self.assertIn("--pattern", aggregate)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", aggregate)
+        self.assertNotIn("continue-on-error", aggregate)
+        self.assertIn("scripts/ci/android_result.py verify", aggregate)
+        self.assertIn("name: android-source-result-${{ steps.source.outputs.commit }}-${{ github.run_id }}-${{ github.run_attempt }}", aggregate)
+        self.assertIn("if-no-files-found: error", aggregate)
 
 
 class ShellLaneTests(unittest.TestCase):
