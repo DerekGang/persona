@@ -499,6 +499,22 @@ test('base64 padding, the one MiB reserve and the photo count decide which origi
   await attachments.close();
 });
 
+test('a ready count-overflow photo keeps that cause on the next prepare instead of claiming size', async () => {
+  const { runtime, repo, attachments, client, session } = await pickedPictures([[1], [2]], { perMessage: 1 });
+  runtime.imageWidth = 120; runtime.imageHeight = 80;
+  const first = await attachments.prepareSend('Read');
+  assert.equal(first.overflowNoticeKey, 'chat_attachment_photos_count_as_files');
+  assert.equal(repo.uploads.length, 1);
+  assert.equal(attachments.attachments.find(item => item.status === 'ready')?.overflowReason, 'count');
+  await attachments.close();
+  await attachments.open(client, context(), session);
+  const second = await attachments.prepareSend('Retry');
+  // The ready photo was uploaded for perMessage, not bytes: a retry must not say the message was too large.
+  assert.equal(second.overflowNoticeKey, 'chat_attachment_photos_count_as_files');
+  assert.equal(repo.uploads.length, 1);
+  await attachments.close();
+});
+
 test('an unsupported photo is rejected even when its original would overflow the request', async () => {
   const { runtime, repo, attachments } = await pickedPictures([[1, 2, 3]], { requestBytes: 1024 * 1024 });
   runtime.imageMime = 'image/heic';

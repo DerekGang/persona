@@ -658,8 +658,10 @@ export class ChatAttachments {
               continue;
             }
           }
+          // A ready item keeps the cause it was uploaded for: an inline-impossible photo (no upload_attachment
+          // feature) has no reason and must not gain a false "too large" notice on every retry (review P1).
           if (item.overflowReason === 'count') countOverflow = true;
-          else sizeOverflow = true;
+          else if (item.overflowReason === 'bytes') sizeOverflow = true;
         }
         filePaths.push(await this.uploadAttachment(item, operation, repository, storage, storageEpoch, admit));
       }

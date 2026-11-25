@@ -105,6 +105,9 @@ test('an accepted hub hello selects picture limits by the destination session ag
   assert.deepEqual(values(), [standard[0], standard[1], standard[2], 4]);
   model.sessions = [ResourceRow.from({id: 'one', machine_id: 'machine', agent: 'pi', launcher: 'codex'}, 'session')];
   assert.deepEqual(values(row), [7340032, 100000, 1024, 7]);
+  // An assistant conversation names its agent under `launcher`, not `agent`.
+  const conversation = ResourceRow.from({id: 'conv', machine_id: 'machine', launcher: 'codex'}, 'conversation');
+  assert.deepEqual(values(conversation), [standard[0], standard[1], 600, 2]);
   hello({per_message: 13}, 'another-hub');
   assert.deepEqual(values(row), [7340032, 100000, 1024, 7]);
   hello({request_bytes: 'wrong', image_bytes: -1, max_side: 0, per_message: 1e30});

@@ -1120,7 +1120,10 @@ export class ClientModel {
     return this.sessions.find((item: ResourceRow) => item.machine === row.machine && (item.session || item.id) === (row.session || row.id)) || row;
   }
   imageLimits(row: ResourceRow = this.selected): ImageLimits {
-    return ImageLimits.forAgent(this.publishedImageLimits, Wire.text(this.sessionRow(row).data(), 'agent'));
+    // A conversation carries its agent under `launcher`; with only `agent` read, an assistant conversation running
+    // codex fell back to claude's limits (review P1).
+    const data = this.sessionRow(row).data();
+    return ImageLimits.forAgent(this.publishedImageLimits, Wire.text(data, 'agent') || Wire.text(data, 'launcher'));
   }
   private heldMessages(row: ResourceRow = this.selected): HeldAgentMessage[] {
     if (row.kind !== 'session') return [];
