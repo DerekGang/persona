@@ -10,6 +10,7 @@ import { setToken } from "../../lib/api";
 import type { KBEntry } from "../../lib/kb";
 import { resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 import { getState, reset } from "../../lib/store";
+import { ONE_PANE } from "../../lib/viewport";
 import { lists, searches } from "./cache";
 
 type Call = { path: string; init: RequestInit };
@@ -114,4 +115,20 @@ it("changes neither the address nor read/seen state for the fallback", async () 
   expect(getState().seen).toEqual(seen);
   expect(state.calls.every((c) => !c.init.method || c.init.method === "GET")).toBe(true);
   expect(state.calls.some((c) => /(?:^|\/)(?:read|seen)(?:\/|$)/.test(c.path))).toBe(false);
+});
+
+it("does not stand in on a narrow screen", async () => {
+  const original = window.matchMedia;
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: vi.fn((query: string) => ({ matches: query === ONE_PANE, addEventListener() {}, removeEventListener() {} })),
+  });
+  try {
+    await render({ kind: "docs" });
+    expect(detailReads()).toEqual([]);
+    expect(detailPane().querySelector("[data-testid=kb-empty-detail-bar]")).not.toBeNull();
+  } finally {
+    Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: original });
+  }
 });

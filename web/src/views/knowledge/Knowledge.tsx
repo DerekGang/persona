@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { kindOf, type KBEntry, type KBKind } from "../../lib/kb";
 import { navigate } from "../../lib/router";
+import { ONE_PANE, useMedia } from "../../lib/viewport";
 import { cx } from "../../ui/atoms";
 import { remember, searches } from "./cache";
 import { EmptyDetail, EntryDetail } from "./KBDetail";
@@ -26,6 +27,8 @@ export function Knowledge({ kind, id, onToggleSidebar }: { kind?: string; id?: s
   const [first, setFirst] = useState<{ listKind: KBKind; entry: KBEntry }>();
   // The search an entry was opened from: its page starts with the places found.
   const [from, setFrom] = useState<{ key: string; q: string } | null>(null);
+  // The list and detail take turns on a phone; the list's first entry stands in only when both fit.
+  const split = !useMedia(ONE_PANE);
   // Something was opened from this page, so "Back" is the browser's back (to the list or the entry before).
   const opened = useRef(false);
 
@@ -48,7 +51,7 @@ export function Knowledge({ kind, id, onToggleSidebar }: { kind?: string; id?: s
   if (kind === "map") return <KnowledgeMap onToggleSidebar={onToggleSidebar} />;
 
   const fallback = first?.listKind === listKind && kindOf(first.entry.kind) === listKind ? first.entry : undefined;
-  const shown = detailOpen ? { kind: kind!, id: id! } : fallback;
+  const shown = detailOpen ? { kind: kind!, id: id! } : split ? fallback : undefined;
   const shownKey = shown ? `${shown.kind}/${shown.id}` : "";
 
   return (
