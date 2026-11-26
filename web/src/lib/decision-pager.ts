@@ -1,4 +1,5 @@
 import { taskRequestRouting, type AssistantEntriesInput } from "./assistant-entries";
+import { sameManager } from "./manager-choice";
 import { taskCardSlots } from "./task-cards";
 import { byTime } from "./times";
 import type { Interaction } from "./types";
@@ -14,19 +15,21 @@ type TaskDecisionInput = Pick<AssistantEntriesInput, "conversation" | "main" | "
 
 export function taskDecisionCards(input: TaskDecisionInput): DecisionCard[] {
   const { conversation, main, manager, feed, plans, cards, lookup } = input;
-  const interactions = input.interactions.filter((ix) => !ix.manager || ix.manager === manager);
+  const interactions = input.interactions.filter((ix) => sameManager(ix.manager, manager));
   if (!interactions.length) return [];
-  const todos = input.todos.filter((todo) => !todo.manager || todo.manager === manager);
+  const todos = input.todos.filter((todo) => sameManager(todo.manager, manager));
   const byTodo = new Map(todos.map((todo) => [todo.id, todo]));
   const slots = taskCardSlots(conversation, cards ?? [], feed, plans, todos, main === conversation);
   const orderedTasks = slots.flatMap((card) => {
     const todo = card.todo_id ? byTodo.get(card.todo_id) : undefined;
     return todo ? [todo] : [];
   });
-  const { requestsFor } = taskRequestRouting(orderedTasks, interactions, lookup, conversation);
-  return orderedTasks.flatMap((todo) => todo.origin === conversation
-    ? requestsFor(todo).asks.map((interaction) => ({ interaction, taskTitle: todo.title }))
-    : []);
+  // In the main conversation taskCardSlots also returns other conversations' tasks; route only this conversation's
+  // tasks so another task sharing an Agent cannot take the request's home away from it.
+  const scopedTasks = orderedTasks.filter((todo) => todo.origin === conversation);
+  const { requestsFor } = taskRequestRouting(scopedTasks, interactions, lookup, conversation);
+  return scopedTasks.flatMap((todo) =>
+    requestsFor(todo).asks.map((interaction) => ({ interaction, taskTitle: todo.title })));
 }
 
 /** Keep the conversation's blocking cards in their incoming order, then show the tasks' oldest cards. */

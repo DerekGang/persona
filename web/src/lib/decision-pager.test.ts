@@ -47,6 +47,18 @@ describe("assistant decisions", () => {
     expect(taskDecisionCards({ ...input, manager: "remote" })).toEqual([]);
   });
 
+  it("treats an explicit assistant manager as the built-in default", () => {
+    const time = "2026-11-24T11:00:00Z";
+    const todo = {
+      id: "task", origin: "assistant", title: "Check the backup", manager: "assistant",
+      created_at: time, updated_at: time,
+      agents: [{ machine_id: "machine", session_id: "session", linked_at: time }],
+    };
+    const ask = question("assistant-card", { manager: "assistant" });
+    expect(taskDecisionCards({ conversation: "assistant", manager: "", todos: [todo], interactions: [ask],
+      feed: [], plans: {}, lookup: makeSessionLookup([]) })).toEqual([{ interaction: ask, taskTitle: todo.title }]);
+  });
+
   it("uses a cross-machine child's task home and does not surface supervisor-held requests", () => {
     const time = "2026-11-24T11:00:00Z";
     const agent = { machine_id: "machine", session_id: "session", linked_at: time };
@@ -63,7 +75,11 @@ describe("assistant decisions", () => {
     const input = { conversation: "assistant", manager: "local", todos: [first, tied],
       interactions: [child, held], lookup, feed: [], plans: {} };
     expect(taskDecisionCards(input)).toEqual([{ interaction: child, taskTitle: tied.title }]);
-    expect(taskDecisionCards({ ...input, main: "assistant", todos: [first, { ...tied, origin: "other-assistant" }] })).toEqual([]);
+    // The other conversation's task is outside this pager; the request still belongs to this conversation's task
+    // that lists the agent, rather than being dropped because the other task came first in the card slots.
+    expect(taskDecisionCards({ ...input, main: "assistant", todos: [first, { ...tied, origin: "other-assistant" }] })).toEqual([
+      { interaction: child, taskTitle: first.title },
+    ]);
     const foldedIntoAssistant = question("task-agent", { manager: "local", folded_under: "assistant" });
     expect(taskDecisionCards({ ...input, interactions: [foldedIntoAssistant] })).toEqual([
       { interaction: foldedIntoAssistant, taskTitle: tied.title },

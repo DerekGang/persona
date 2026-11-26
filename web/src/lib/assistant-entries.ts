@@ -1,7 +1,7 @@
 import { backgroundWork, taskBackgroundWork, type BackgroundWork } from "./background-work";
 import { cardDismissed, cardFiled, cardSent, startFailure, type FeedItem, type TaskPlan } from "./feed";
 import { cardBucket, taskCardSlots, type TaskCardMetadata } from "./task-cards";
-import { decisionDismissed, linkedParkInteraction, parkInteractionID, reviewState, withoutParkInteraction } from "./supervision";
+import { decisionDismissed, linkedParkInteraction, reviewState, withoutParkInteraction } from "./supervision";
 import { finishedAt, hubNeedsYou, JUST_DONE_MS, openByView, supersededFailedStarts, triage } from "./todo-triage";
 import { awaitsReview, dockAgents, heldDelivery, heldForSupervisor, makeSessionLookup, openAsk, taskReviewDecisionAsk, todoRank, todoStatus, withInteractionLookup, type SessionLookup, type Todo, type TodoStatus } from "./todos";
 import { byTime } from "./times";
@@ -137,7 +137,12 @@ export function decisionLaterKey(todo: Todo): string {
 /** A request's task home is shared by Needs you and the decision pager. */
 export function taskRequestRouting(todos: readonly Todo[], interactions: readonly Interaction[], lookup: SessionLookup, conversation: string) {
   const activeAgents = (todo: Todo) => (todo.done_at ? [] : (todo.agents ?? []).filter((a) => !a.released_at));
-  const homeAgents = (todo: Todo) => (todo.done_at ? [] : (todo.agents ?? []).filter((a) => !a.released_at || parkInteractionID(todo)));
+  const homeAgents = (todo: Todo) => {
+    if (todo.done_at) return [];
+    const linked = linkedParkInteraction(todo, interactions);
+    return (todo.agents ?? []).filter((a) => !a.released_at ||
+      (linked !== undefined && a.machine_id === linked.machine_id && a.session_id === linked.session_id));
+  };
   // One home per request (docs/design/DESIGN_SYSTEM.md 4.8): an Agent several of these tasks list asks under one of them,
   // the task the hub ties its session to (`todo`), else the first that lists it. The others neither repeat its cards nor
   // wait on the user for them; they are in progress.
