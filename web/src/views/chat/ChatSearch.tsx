@@ -35,6 +35,7 @@ export interface ChatSearchProps {
   open: boolean;
   query: string;
   onQuery: (q: string) => void;
+  /** Loaded chat items searched by default when controlled `results` are not provided. */
   items?: Item[];
   /** The folded work is being fetched for the search (useFoldSearch). */
   foldsLoading?: boolean;
@@ -44,22 +45,21 @@ export interface ChatSearchProps {
   rounds: number;
   hasMore: boolean;
   /** Pages back (up to 20) until the start, an error or `stop()`; `onPage` counts the pages in. */
-  onLoadEarlier?: (onPage: (n: number) => void, stopped: () => boolean) => Promise<LoadOutcome>;
+  onLoadEarlier?: (onPage: (n: number) => void, stopped: () => boolean) => Promise<LoadOutcome> | void;
   onPick: (hit: ChatSearchHit) => void;
   onClose: () => void;
-  /** Results for the current query, owned by a controlled panel. */
+  /** Controlled search results skip the default `searchChat` pass over `items`. */
   results?: ChatSearchResults;
-  /** Controlled searching state; by default it follows the debounced query. */
+  /** Controlled search-in-progress state (defaults to debounce state, or false when `results` are controlled). */
   searching?: boolean;
-  /** A controlled matcher used with the default debounce instead of searchChat. */
+  /** Custom matcher replacing the default `searchChat` when `results` are not controlled. */
   searchItems?: (items: Item[], query: string) => ChatSearchResults;
-  /** The default wait after the last key before matching. */
+  /** Debounce delay in ms before running local matching (default 200). */
   settleMs?: number;
-  /** Controlled earlier-load state. Supplying any of these keeps ChatSearch from owning that state. */
+  /** Controlled earlier-loading state, page count, status notice and stop callback. */
   loadingEarlier?: boolean;
   loadedPages?: number;
   notice?: string | null;
-  /** Called when Stop is chosen, in addition to setting the stopping flag passed to onLoadEarlier. */
   onStopLoadEarlier?: () => void;
 }
 
@@ -84,13 +84,14 @@ export function ChatSearch({
   notice: controlledNotice,
   onStopLoadEarlier,
 }: ChatSearchProps) {
+  const hasControlledResults = controlledResults !== undefined;
   const [settledQuery, setSettledQuery] = useState(query);
   useEffect(() => {
-    if (controlledResults !== undefined) return;
+    if (hasControlledResults || settleMs <= 0) return;
     const id = window.setTimeout(() => setSettledQuery(query), settleMs);
     return () => clearTimeout(id);
-  }, [query, settleMs, controlledResults]);
-  const applied = controlledResults !== undefined ? query : settledQuery;
+  }, [query, hasControlledResults, settleMs]);
+  const effectiveApplied = settleMs <= 0 ? query : settledQuery;
   // A controlled result object belongs to the query that was current when that object first arrived. Keeping the
   // object as the only dependency lets a parent update query and results together, while a query-only update hides
   // the old hits until the parent supplies a new object.
@@ -98,25 +99,26 @@ export function ChatSearch({
     () => controlledResults === undefined ? undefined : query,
     [controlledResults], // eslint-disable-line react-hooks/exhaustive-deps -- the result object, not query, starts a new result set
   );
-  const controlledResultsStale = controlledResults !== undefined && controlledResultQuery !== query;
-  const searching = controlledResults !== undefined
+  const controlledResultsStale = hasControlledResults && controlledResultQuery !== query;
+  const searching = hasControlledResults
     ? Boolean(controlledSearching) || controlledResultsStale
-    : controlledSearching ?? applied !== query;
+    : controlledSearching ?? effectiveApplied !== query;
+  const activeQuery = hasControlledResults ? query : effectiveApplied;
   // only while the panel shows: the query stays after a pick, and the chat keeps changing under it. A controlled
   // result set or matcher replaces searchChat but keeps the same debounce path.
   const results = useMemo(() => {
-    if (controlledResults !== undefined) return controlledResultsStale ? NO_RESULTS : controlledResults;
-    return open ? (searchItems ?? searchChat)(items, applied) : NO_RESULTS;
-  }, [open, items, applied, controlledResults, controlledResultsStale, searchItems]);
+    if (!open) return NO_RESULTS;
+    if (hasControlledResults) return controlledResultsStale ? NO_RESULTS : controlledResults;
+    return (searchItems ?? searchChat)(items, effectiveApplied);
+  }, [open, items, effectiveApplied, hasControlledResults, controlledResults, controlledResultsStale, searchItems]);
   const groups = useMemo(() => groupHits(results.hits), [results.hits]);
 
-  const [loading, setLoading] = useState(false);
-  const [pages, setPages] = useState(0);
-  const [loadNotice, setLoadNotice] = useState<string | null>(null);
-  const earlierControlled = controlledLoadingEarlier !== undefined || controlledLoadedPages !== undefined || controlledNotice !== undefined;
-  const loadingEarlier = earlierControlled ? controlledLoadingEarlier ?? false : loading;
-  const loadedPages = earlierControlled ? controlledLoadedPages ?? 0 : pages;
-  const notice = earlierControlled ? controlledNotice ?? null : loadNotice;
+  const [internalLoading, setInternalLoading] = useState(false);
+  const [internalPages, setInternalPages] = useState(0);
+  const [internalNotice, setInternalNotice] = useState<string | null>(null);
+  const loadingEarlier = controlledLoadingEarlier ?? internalLoading;
+  const loadedPages = controlledLoadedPages ?? internalPages;
+  const notice = controlledNotice !== undefined ? controlledNotice : internalNotice;
   const stop = useRef(false);
   const loadRun = useRef(0);
   const wasOpen = useRef(open);
@@ -128,13 +130,11 @@ export function ChatSearch({
       stop.current = true;
       loadRun.current++;
       if (closed && loadingEarlier) onStopLoadEarlier?.();
-      if (!earlierControlled) {
-        setLoading(false);
-        setPages(0);
-        setLoadNotice(null);
-      }
+      setInternalLoading(false);
+      setInternalPages(0);
+      setInternalNotice(null);
     }
-  }, [open, loadingEarlier, earlierControlled, onStopLoadEarlier]);
+  }, [open, loadingEarlier, onStopLoadEarlier]);
   useEffect(() => () => {
     stop.current = true;
     loadRun.current++;
@@ -147,20 +147,21 @@ export function ChatSearch({
     if (!onLoadEarlier) return;
     const run = ++loadRun.current;
     stop.current = false;
-    if (!earlierControlled) {
-      setLoading(true);
-      setPages(0);
-      setLoadNotice(null);
-    }
+    setInternalLoading(true);
+    setInternalPages(0);
+    setInternalNotice(null);
     try {
-      const outcome = await onLoadEarlier((n) => {
-        if (loadRun.current === run && !earlierControlled) setPages(n);
-      }, () => stop.current || loadRun.current !== run);
-      if (loadRun.current === run && !earlierControlled) setLoadNotice(outcome);
+      const outcome = await onLoadEarlier(
+        (n) => {
+          if (loadRun.current === run) setInternalPages(n);
+        },
+        () => stop.current || loadRun.current !== run,
+      );
+      if (loadRun.current === run && outcome !== undefined) setInternalNotice(outcome);
     } catch {
-      if (loadRun.current === run && !earlierControlled) setLoadNotice(t("chat-chatview.search_load_failed"));
+      if (loadRun.current === run) setInternalNotice(t("chat-chatview.search_load_failed"));
     } finally {
-      if (loadRun.current === run && !earlierControlled) setLoading(false);
+      if (loadRun.current === run) setInternalLoading(false);
     }
   };
 
@@ -213,7 +214,7 @@ export function ChatSearch({
         </div>
         <div className="-mx-1 max-h-[52vh] overflow-y-auto px-1 max-sm:max-h-none" role="list">
           {!searching && results.hits.length === 0 ? (
-            <Empty icon="search" title={applied.trim() ? t("chat-chatsearch.no_hits") : t("chat-chatsearch.enter_keyword")}>
+            <Empty icon="search" title={activeQuery.trim() ? t("chat-chatsearch.no_hits") : t("chat-chatsearch.enter_keyword")}>
               {t("chat-chatsearch.scope")}
             </Empty>
           ) : (

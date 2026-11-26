@@ -19,15 +19,18 @@ import { t } from "../../i18n";
 const FOLD_AT = 4;
 const FOLDED = 3;
 
+function openFilePanel(mid: string, path: string, cwd?: string, readOnly?: boolean) {
+  openPanel({ kind: "file", mid, path, ...(cwd ? { cwd } : {}), ...(readOnly ? { readOnly: true } : {}) });
+}
+
 export interface FileCardsProps {
   files: AttachedFile[];
   mid: string;
   align?: "start" | "end";
-  /** An explicit working directory for file URLs and the default file panel. */
   cwd?: string;
-  /** A controlled panel opens the file instead of the default file panel. */
-  onOpenFile?: (path: string) => void;
-  /** A controlled panel resolves media instead of the default file/download route. */
+  /** A panel with its own file viewer replaces the default side-panel singleton. */
+  onOpenFile?: (file: AttachedFile) => void;
+  /** A panel with its own media resources replaces the default fileDownloadURL builder. */
   resolveDownloadURL?: (path: string, options: { inline?: boolean }) => string;
 }
 
@@ -100,7 +103,7 @@ function FileCard({
   return (
     <button
       type="button"
-      onClick={() => onOpenFile ? onOpenFile(f.path) : openPanel({ kind: "file", mid, path: f.path, ...(cwd ? { cwd } : {}), ...(readOnly ? { readOnly: true } : {}) })}
+      onClick={() => (onOpenFile ? onOpenFile(f) : openFilePanel(mid, f.path, cwd, readOnly))}
       className="flex max-w-[360px] min-w-0 items-center gap-2 rounded-[12px] bg-inset px-3 py-2 text-left shadow-hairline hover:bg-hover"
       title={f.path}
     >
@@ -111,109 +114,66 @@ function FileCard({
   );
 }
 
-/** Files an answer names by absolute path that are there on the machine, as cards under it (iOS links the same). */
 export interface ReplyFilesProps {
   text: string;
   mid: string;
   cwd?: string;
-  /** Explicit files skip path parsing and the default path-presence store. */
-  files?: AttachedFile[];
-  /** Controlled path stats skip the default path-presence store. */
+  /** Controlled path-stat resolver skips the default path-presence store and /stat fetches. */
   resolvePathStat?: (path: string) => PathStat | undefined;
-  onOpenFile?: FileCardsProps["onOpenFile"];
-  resolveThumbURL?: DocumentCardsProps["resolveThumbURL"];
-  resolveDownloadURL?: FileCardsProps["resolveDownloadURL"];
+  /** Explicit resolved files skip both reply path parsing and path-presence lookups. */
+  files?: AttachedFile[];
+  /** Controlled file opener replacing the default side-panel singleton. */
+  onOpenFile?: (file: AttachedFile) => void;
+  /** Controlled thumbnail URL resolver for document cards. */
+  resolveThumbURL?: (path: string, size: number) => string;
+  /** Controlled download URL resolver for video and audio cards. */
+  resolveDownloadURL?: (path: string, options: { inline?: boolean }) => string;
 }
 
-export function ReplyFiles({ files, text, ...props }: ReplyFilesProps) {
-  if (files !== undefined) return <ReplyFilesView {...props} files={files} controlled />;
-  return <ParsedReplyFiles {...props} text={text} />;
-}
-
-function ParsedReplyFiles({ text, mid, cwd, resolvePathStat, ...props }: Omit<ReplyFilesProps, "files">) {
-  const paths = useMemo(() => replyPaths(text), [text]);
-  if (resolvePathStat) return <ResolvedReplyFiles {...props} mid={mid} cwd={cwd} paths={paths} resolvePathStat={resolvePathStat} />;
-  return <LinkedReplyFiles {...props} mid={mid} cwd={cwd} paths={paths} />;
-}
-
-function LinkedReplyFiles({
-  mid,
-  cwd,
-  paths,
-  ...props
-}: Omit<ReplyFilesProps, "files" | "text" | "resolvePathStat"> & { paths: string[] }) {
-  const { stat, key } = usePathLinks(mid, cwd, paths);
-  const files = useMemo<AttachedFile[]>(
-    () => filesAtPaths(paths, stat),
-    [paths, key], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  return <ReplyFilesView {...props} files={files} mid={mid} cwd={cwd} />;
-}
-
-function ResolvedReplyFiles({
-  mid,
-  cwd,
-  paths,
-  resolvePathStat,
-  ...props
-}: Omit<ReplyFilesProps, "files" | "text" | "resolvePathStat"> & {
-  paths: string[];
-  resolvePathStat: NonNullable<ReplyFilesProps["resolvePathStat"]>;
-}) {
-  return <ReplyFilesView {...props} files={filesAtPaths(paths, resolvePathStat)} mid={mid} cwd={cwd} controlled />;
-}
-
-function filesAtPaths(paths: string[], stat: (path: string) => PathStat | undefined): AttachedFile[] {
-  return paths.flatMap((path) => {
-    const s = stat(path);
-    return s?.kind === "file" ? [{ kind: mediaKindOf(path), path, name: path.split("/").pop() || path, size: s.size }] : [];
+function statFiles(paths: string[], stat: (path: string) => PathStat | undefined): AttachedFile[] {
+  return paths.flatMap((p) => {
+    const s = stat(p);
+    return s?.kind === "file" ? [{ kind: mediaKindOf(p), path: p, name: p.split("/").pop() || p, size: s.size }] : [];
   });
 }
 
-function ReplyFilesView({
-  files,
-  mid,
-  cwd,
-  controlled = false,
-  onOpenFile,
-  resolveThumbURL,
-  resolveDownloadURL,
-}: Pick<ReplyFilesProps, "mid" | "cwd" | "onOpenFile" | "resolveThumbURL" | "resolveDownloadURL"> & {
-  files: AttachedFile[];
-  controlled?: boolean;
-}) {
+function renderReplyFiles(files: AttachedFile[], { mid, cwd, onOpenFile, resolveThumbURL, resolveDownloadURL }: ReplyFilesProps) {
   const docs = files.filter((f) => isDocument(f.path)).slice(0, MAX_DOCUMENT_CARDS);
   const rest = files.filter((f) => !isDocument(f.path));
   return files.length ? (
     <div className="mt-2 flex flex-col gap-1.5">
-      {rest.length > 0 && (
-        <FileCards
-          files={rest}
-          mid={mid}
-          align="start"
-          cwd={controlled ? cwd : undefined}
-          onOpenFile={onOpenFile}
-          resolveDownloadURL={resolveDownloadURL}
-        />
-      )}
-      {docs.length > 0 && (
-        <DocumentCards files={docs} mid={mid} cwd={cwd} onOpenFile={onOpenFile} resolveThumbURL={resolveThumbURL} />
-      )}
+      {rest.length > 0 && <FileCards files={rest} mid={mid} align="start" cwd={cwd} onOpenFile={onOpenFile} resolveDownloadURL={resolveDownloadURL} />}
+      {docs.length > 0 && <DocumentCards files={docs} mid={mid} cwd={cwd} onOpenFile={onOpenFile} resolveThumbURL={resolveThumbURL} />}
     </div>
   ) : null;
 }
 
-/** The documents an answer names, as cards with their first page, in a row that scrolls sideways (iOS DocumentCards). */
+function DefaultReplyFiles(props: ReplyFilesProps) {
+  const paths = useMemo(() => replyPaths(props.text), [props.text]);
+  const { stat, key } = usePathLinks(props.mid, props.cwd, paths);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const files = useMemo(() => statFiles(paths, stat), [paths, key]);
+  return renderReplyFiles(files, props);
+}
+
+/** Files an answer names by absolute path that are there on the machine, as cards under it (iOS links the same). */
+export function ReplyFiles(props: ReplyFilesProps) {
+  if (props.files !== undefined) return renderReplyFiles(props.files, props);
+  if (props.resolvePathStat) return renderReplyFiles(statFiles(replyPaths(props.text), props.resolvePathStat), props);
+  return <DefaultReplyFiles {...props} />;
+}
+
 export interface DocumentCardsProps {
   files: AttachedFile[];
   mid: string;
   cwd?: string;
-  /** A controlled panel opens the file instead of the default file panel. */
-  onOpenFile?: (path: string) => void;
-  /** A controlled panel resolves thumbnails instead of the default file/thumb route. */
+  /** Controlled file opener replacing the default side-panel singleton. */
+  onOpenFile?: (file: AttachedFile) => void;
+  /** Controlled thumbnail URL resolver replacing the default fileThumbURL builder. */
   resolveThumbURL?: (path: string, size: number) => string;
 }
 
+/** The documents an answer names, as cards with their first page, in a row that scrolls sideways (iOS DocumentCards). */
 export function DocumentCards({ files, mid, cwd, onOpenFile, resolveThumbURL }: DocumentCardsProps) {
   const row = useRef<HTMLDivElement>(null);
   const { edges, measure } = useEdgeFade(row, [files.length]);
@@ -253,7 +213,7 @@ function DocumentCard({
   return (
     <button
       type="button"
-      onClick={() => onOpenFile ? onOpenFile(f.path) : openPanel({ kind: "file", mid, path: f.path, ...(readOnly ? { readOnly: true } : {}) })}
+      onClick={() => (onOpenFile ? onOpenFile(f) : openFilePanel(mid, f.path, cwd, readOnly))}
       title={f.path}
       className="flex h-16 w-60 max-w-full shrink-0 items-center gap-3 rounded-[14px] bg-inset px-2 text-left shadow-hairline outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent"
       style={{ animation: "fade-in 220ms ease-out both" }}
