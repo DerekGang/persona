@@ -50,6 +50,46 @@ class AppNavigatorTest {
         assertEquals(listOf(AgentsRoute, InboxRoute), stacks.getValue(AppTab.Agents))
     }
 
+    @Test fun reopeningTheVisibleAssistantChatKeepsItsNewDecisionSource() {
+        selected = AppTab.Persona
+        val agent = ChatRoute("machine", "task", ConversationKind.Agent)
+        stacks.getValue(AppTab.Persona).add(agent)
+
+        navigator.navigate(agent.copy(decisionSource = DecisionSource("asking-call")))
+
+        // The existing page is reused, but the new source must reach ChatScreen so it can jump to the request.
+        assertEquals(listOf(AssistantRoute, agent.copy(decisionSource = DecisionSource("asking-call"))),
+            stacks.getValue(AppTab.Persona))
+    }
+
+    @Test fun aKindlessReopenKeepsTheKnownKindAndTheNewDecisionSource() {
+        selected = AppTab.Persona
+        val agent = ChatRoute("machine", "task", ConversationKind.Agent)
+        stacks.getValue(AppTab.Persona).add(agent)
+
+        navigator.navigate(agent.copy(kind = null, decisionSource = DecisionSource("asking-call")))
+
+        assertEquals(listOf(AssistantRoute, agent.copy(decisionSource = DecisionSource("asking-call"))),
+            stacks.getValue(AppTab.Persona))
+    }
+
+    @Test fun aSideDecisionSourceOpensOverTheAssistantHostAndBackReturnsToIt() {
+        selected = AppTab.Persona
+        val assistant = ChatRoute("machine", "assistant", ConversationKind.Assistant)
+        val task = ChatRoute("machine", "task", ConversationKind.Agent)
+        val side = ChatRoute("machine", "side", ConversationKind.Agent, side = true,
+            decisionSource = DecisionSource("asking-call"))
+        stacks.getValue(AppTab.Persona).add(assistant)
+        stacks.getValue(AppTab.Persona).add(task)
+
+        navigator.navigate(side)
+
+        // The side lands over the Assistant host, not over the source task chat: Back returns to the pager host.
+        assertEquals(listOf(AssistantRoute, assistant, side), stacks.getValue(AppTab.Persona))
+        navigator.back()
+        assertEquals(listOf(AssistantRoute, assistant), stacks.getValue(AppTab.Persona))
+    }
+
     @Test fun secondarySettingsPagesReturnToTheOriginalTabAndPage() {
         val origin = ChatRoute("machine", "session")
         val settingsPages = listOf(SettingsRoute, SettingsPageRoute(SettingsPage.About), PairingRoute, ConnectionSettingsRoute)
