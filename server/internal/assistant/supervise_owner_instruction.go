@@ -65,9 +65,10 @@ func (v *Supervision) recordOwnerInstruction(machine, session, source, clientMsg
 		v.OwnerWork = append(v.OwnerWork, OwnerSessionWork{MachineID: machine, SessionID: session})
 		work = &v.OwnerWork[len(v.OwnerWork)-1]
 	}
-	// Only the message's stable identity proves a redelivery. Its timestamp cannot order it against an assignment.
-	if work.Instruction != nil && clientMsgID != "" && work.Instruction.ClientMsgID == clientMsgID &&
-		work.Instruction.Source == source && work.Instruction.Excerpt == excerpt {
+	// A stable message id proves a redelivery; without one, the exact same timestamp and content do. This dedupe never
+	// orders an instruction against an assignment.
+	if work.Instruction != nil && work.Instruction.Source == source && work.Instruction.ClientMsgID == clientMsgID &&
+		work.Instruction.Excerpt == excerpt && (clientMsgID != "" || work.Instruction.At.Equal(at)) {
 		return false
 	}
 	work.Instruction = &OwnerInstruction{At: at, Source: source, ClientMsgID: clientMsgID, Excerpt: excerpt, NeedsReport: true}

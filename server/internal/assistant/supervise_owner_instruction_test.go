@@ -73,20 +73,34 @@ func TestOwnerInstructionKeepsLatestPerSession(t *testing.T) {
 }
 
 func TestOwnerInstructionRedeliveryDoesNotRearmAfterAssignment(t *testing.T) {
-	v := &Supervision{}
-	at := time.Now().UTC()
-	if !v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputApp, "m1", "Keep the check open.", at) {
-		t.Fatal("owner instruction was not recorded")
-	}
-	if !v.recordAssignment("box", "s1", at.Add(time.Minute)) {
-		t.Fatal("Persona assignment was not recorded")
-	}
-	if v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputApp, "m1", "Keep the check open.", at.Add(-time.Hour)) {
-		t.Fatal("a redelivery of the superseded instruction rearmed the guard")
-	}
-	work := v.ownerSessionWork("box", "s1")
-	if work == nil || work.Instruction == nil || work.Instruction.NeedsReport {
-		t.Fatalf("redelivery changed the superseded instruction: %+v", work)
+	for _, tc := range []struct {
+		name, source, clientMsgID string
+		redeliveredAt             time.Time
+	}{
+		{name: "app message id", source: assistantwire.OwnerInputApp, clientMsgID: "m1"},
+		{name: "terminal without an id", source: assistantwire.OwnerInputTerminal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := &Supervision{}
+			at := time.Now().UTC()
+			if !v.recordOwnerInstruction("box", "s1", tc.source, tc.clientMsgID, "Keep the check open.", at) {
+				t.Fatal("owner instruction was not recorded")
+			}
+			if !v.recordAssignment("box", "s1", at.Add(time.Minute)) {
+				t.Fatal("Persona assignment was not recorded")
+			}
+			redeliveredAt := at
+			if tc.clientMsgID != "" {
+				redeliveredAt = at.Add(-time.Hour)
+			}
+			if v.recordOwnerInstruction("box", "s1", tc.source, tc.clientMsgID, "Keep the check open.", redeliveredAt) {
+				t.Fatal("a redelivery of the superseded instruction rearmed the guard")
+			}
+			work := v.ownerSessionWork("box", "s1")
+			if work == nil || work.Instruction == nil || work.Instruction.NeedsReport {
+				t.Fatalf("redelivery changed the superseded instruction: %+v", work)
+			}
+		})
 	}
 }
 
