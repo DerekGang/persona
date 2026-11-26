@@ -71,6 +71,8 @@ describe("a comment of the review", () => {
     expect(reviewDiff({ ...res, scope: "uncommitted" })).toEqual({ kind: "review", scope: "uncommitted" });
     expect(reviewDiff({ scope: "commit", base: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "commit", base: "89abcde", baseHash: "89abcdef00" });
     expect(reviewDiff({ scope: "turn", base: { hash: "0123456789", short: "0123456" }, target: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "turn", base: "0123456", baseHash: "0123456789", target: "89abcdef00" });
+    expect(reviewDiff({ scope: "turn", base: { empty: true }, target: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "turn", base: "89abcde", emptyBase: true, target: "89abcdef00" });
+    expect(reviewDiff({ scope: "turn", base: { hash: "0123456789", short: "0123456" }, target: { working: true } })).toEqual({ kind: "review", scope: "turn", base: "0123456", baseHash: "0123456789", live: true });
   });
 
   it("carries the diff's rows of its lines, the removed ones between them too", () => {
@@ -141,7 +143,9 @@ describe("the review as a message", () => {
       ["uncommitted", { kind: "review", scope: "uncommitted" }],
       ["since 89abcde", { kind: "review", scope: "commit", base: "89abcde", baseHash: "89abcde" }],
       ["branch since 0123456", { kind: "review", scope: "branch", base: "0123456" }],
-      ["turn 0123456", { kind: "review", scope: "turn", base: "0123456", baseHash: "0123456" }],
+      ["turn 0123456", { kind: "review", scope: "turn", base: "0123456", baseHash: "0123456", live: true }],
+      ["turn ..89abcde", { kind: "review", scope: "turn", base: "89abcde", emptyBase: true, target: "89abcde" }],
+      ["turn 0123456..89abcde", { kind: "review", scope: "turn", base: "0123456", baseHash: "0123456", target: "89abcde" }],
       ["commit 1234abcd", { kind: "commit", sha: "1234abcd" }],
       ["staged", { kind: "staged" }],
     ] as const)

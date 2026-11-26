@@ -76,6 +76,10 @@ describe("line ranges", () => {
     expect(panelCalls.at(-1)).toMatchObject({ kind: "review", scope: "branch", base: "origin/main" });
     expect(spot({ kind: "review", scope: "turn", base: "1234567", baseHash: "1234567890abcdef", target: "76543210fedcba" })).toBe(true);
     expect(panelCalls.at(-1)).toMatchObject({ kind: "review", scope: "turn", base: "1234567890abcdef", target: "76543210fedcba" });
+    expect(spot({ kind: "review", scope: "turn", base: "1234567", baseHash: "1234567890abcdef", live: true })).toBe(true);
+    expect(panelCalls.at(-1)).toMatchObject({ kind: "review", scope: "turn", base: "1234567890abcdef", live: true });
+    expect(spot({ kind: "review", scope: "turn", base: "1234567", emptyBase: true, target: "76543210fedcba" })).toBe(true);
+    expect(panelCalls.at(-1)).toMatchObject({ kind: "review", scope: "turn", target: "76543210fedcba" });
   });
 
   it("picks diff rows by position: numbers from the new file, removed lines on their own count as old", () => {

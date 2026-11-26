@@ -79,7 +79,7 @@ func (n *Node) gitReview(ctx context.Context, p proto.GitReviewRequest) (*proto.
 		return nil, err
 	}
 	alone := len(p.Paths) > 0
-	files, err := n.reviewFiles(ctx, root, base, target, spec)
+	files, err := n.reviewFiles(ctx, root, base, target, p.Scope == proto.ReviewTurn && p.Live, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 			}
 			targetParent, _ = checkpointParent(ctx, root, targetRef.Hash)
 		}
-		if p.Base != "" && !baseAllowed(p.Base) && p.Base != targetParent {
+		if p.Base != "" && !p.Live && !baseAllowed(p.Base) && p.Base != targetParent {
 			return "", "", reviewErr(proto.CodeBadBase, "not a checkpoint of this session: "+p.Base)
 		}
 		baseHash := p.Base
@@ -343,7 +343,7 @@ func reviewSpec(paths []string) ([]string, error) {
 
 // reviewFiles lists the files that changed (git's raw diff and its line counts) and, when target is empty, the new
 // files in the working tree, in path order, with the ones file.read refuses marked Refused.
-func (n *Node) reviewFiles(ctx context.Context, root, base, target string, spec []string) ([]proto.GitReviewFile, error) {
+func (n *Node) reviewFiles(ctx context.Context, root, base, target string, liveTurn bool, spec []string) ([]proto.GitReviewFile, error) {
 	revs := []string{base}
 	if target != "" {
 		revs = append(revs, target)
@@ -375,7 +375,7 @@ func (n *Node) reviewFiles(ctx context.Context, root, base, target string, spec 
 			}
 		}
 	}
-	if target == "" {
+	if liveTurn {
 		var err error
 		files, err = n.keepLiveUntracked(ctx, root, base, files, seen)
 		if err != nil {
@@ -494,7 +494,6 @@ func checkpointBlob(ctx context.Context, root, base, path string) (string, bool)
 }
 
 func workingBlob(ctx context.Context, root, path string, st os.FileInfo) (string, error) {
-	const max = 32 << 20
 	if st.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(filepath.Join(root, filepath.FromSlash(path)))
 		if err != nil {
@@ -503,8 +502,8 @@ func workingBlob(ctx context.Context, root, path string, st os.FileInfo) (string
 		out, err := gitWithEnvInput(ctx, root, nil, strings.NewReader(target), "hash-object", "--stdin", "--path="+path)
 		return strings.TrimSpace(out), err
 	}
-	if !st.Mode().IsRegular() || st.Size() > max {
-		return "", errors.New("not a regular file within the hash limit")
+	if !st.Mode().IsRegular() {
+		return "", errors.New("not a regular file")
 	}
 	f, err := os.Open(filepath.Join(root, filepath.FromSlash(path)))
 	if err != nil {

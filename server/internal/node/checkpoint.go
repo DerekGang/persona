@@ -47,7 +47,7 @@ type checkpointTracker struct {
 	mu      sync.Mutex
 	status  map[string]string
 	running map[string]bool
-	pending map[string]string
+	pending map[string][]string
 	waiters map[string][]chan struct{}
 	limits  checkpointLimits
 	capture func(context.Context, string, string, int64) (checkpointResult, error)
@@ -114,7 +114,7 @@ func (n *Node) noteCheckpointEnds(rows []proto.Session) {
 		n.checkpoints.running = map[string]bool{}
 	}
 	if n.checkpoints.pending == nil {
-		n.checkpoints.pending = map[string]string{}
+		n.checkpoints.pending = map[string][]string{}
 	}
 	for _, row := range rows {
 		if row.SessionID == "" || seen[row.SessionID] {
@@ -129,15 +129,16 @@ func (n *Node) noteCheckpointEnds(rows []proto.Session) {
 			// establishes the base for the next turn instead of losing the turn entirely.
 			ended = row.Status == proto.StatusDone || row.Status == proto.StatusIdle
 		}
-		if !ended || row.Cwd == "" || !checkpointInRepo(row.Cwd) {
+		cwd := n.checkpointRowCwd(row)
+		if !ended || cwd == "" || !checkpointInRepo(cwd) {
 			continue
 		}
 		if n.checkpoints.running[row.SessionID] {
-			n.checkpoints.pending[row.SessionID] = row.Cwd
+			n.checkpoints.pending[row.SessionID] = append(n.checkpoints.pending[row.SessionID], cwd)
 			continue
 		}
 		n.checkpoints.running[row.SessionID] = true
-		starts = append(starts, start{id: row.SessionID, cwd: row.Cwd})
+		starts = append(starts, start{id: row.SessionID, cwd: cwd})
 	}
 	n.checkpoints.mu.Unlock()
 
@@ -149,6 +150,18 @@ func (n *Node) noteCheckpointEnds(rows []proto.Session) {
 func checkpointTurnEnded(prev, status string) bool {
 	return (prev == proto.StatusWorking || prev == proto.StatusBlocked) &&
 		(status == proto.StatusIdle || status == proto.StatusDone)
+}
+
+func (n *Node) checkpointRowCwd(row proto.Session) string {
+	if row.Cwd != "" {
+		return row.Cwd
+	}
+	if n.state != nil {
+		if st, ok := n.state.get(row.SessionID); ok {
+			return st.Cwd
+		}
+	}
+	return ""
 }
 
 // checkpointInRepo avoids spawning Git for the many sessions whose folder is not a repository. A linked worktree has a
@@ -180,8 +193,13 @@ func (n *Node) captureTurnCheckpoint(session, cwd string) {
 			n.logf("checkpoint %s: %v", checkpointSessionLabel(session), err)
 		}
 		n.checkpoints.mu.Lock()
-		if next, ok := n.checkpoints.pending[session]; ok {
-			delete(n.checkpoints.pending, session)
+		if queue := n.checkpoints.pending[session]; len(queue) > 0 {
+			next := queue[0]
+			if len(queue) == 1 {
+				delete(n.checkpoints.pending, session)
+			} else {
+				n.checkpoints.pending[session] = queue[1:]
+			}
 			n.checkpoints.mu.Unlock()
 			cwd = next
 			continue
@@ -438,6 +456,11 @@ func (n *Node) captureCheckpoint(ctx context.Context, cwd, session string, turn 
 	if _, err := os.Stat(tmpPack); err != nil {
 		return fail("pack is not there")
 	}
+	gcLock, err := acquireCheckpointGCLock(commonDir)
+	if err != nil {
+		return fail(err.Error())
+	}
+	defer gcLock()
 	mainPackDir := filepath.Join(objectsDir, "pack")
 	if err := os.MkdirAll(mainPackDir, 0o755); err != nil {
 		return fail(checkpointErrReason(ctx, err))
@@ -583,12 +606,61 @@ func cleanupCheckpointTemps(gitDir string) {
 		if ok {
 			if pid, err := strconv.Atoi(pidText); err == nil && pid == os.Getpid() {
 				continue
+			} else if err == nil && checkpointProcessAlive(pid) {
+				continue
 			}
 		} else if info, err := e.Info(); err == nil && info.ModTime().After(now.Add(-time.Minute)) {
 			continue // a name from before PIDs were added: give a live writer time to finish
 		}
 		_ = os.RemoveAll(filepath.Join(gitDir, name))
 	}
+}
+
+// acquireCheckpointGCLock keeps an automatic or explicit git gc from pruning the pack between its publication and the
+// checkpoint ref. Git's own gc.pid check makes a concurrent gc refuse; the lock is removed as soon as the ref exists.
+func acquireCheckpointGCLock(gitDir string) (func(), error) {
+	path := filepath.Join(gitDir, "gc.pid")
+	host, _ := os.Hostname()
+	content := fmt.Sprintf("%d %s\n", os.Getpid(), host)
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			if _, writeErr := f.WriteString(content); writeErr != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return nil, writeErr
+			}
+			if closeErr := f.Close(); closeErr != nil {
+				_ = os.Remove(path)
+				return nil, closeErr
+			}
+			return func() {
+				if data, err := os.ReadFile(path); err == nil && string(data) == content {
+					_ = os.Remove(path)
+				}
+			}, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		data, readErr := os.ReadFile(path)
+		fields := strings.Fields(string(data))
+		if readErr == nil && len(fields) > 0 {
+			if pid, parseErr := strconv.Atoi(fields[0]); parseErr == nil && checkpointProcessAlive(pid) {
+				return nil, fmt.Errorf("git gc is already running")
+			}
+			if len(fields) > 1 && fields[1] != host {
+				if info, statErr := os.Stat(path); statErr == nil && info.ModTime().After(time.Now().Add(-12*time.Hour)) {
+					return nil, fmt.Errorf("git gc is already running")
+				}
+			}
+		}
+		if info, statErr := os.Stat(path); statErr == nil && info.ModTime().After(time.Now().Add(-12*time.Hour)) && len(fields) == 0 {
+			return nil, fmt.Errorf("git gc is already running")
+		}
+		_ = os.Remove(path)
+	}
+	return nil, fmt.Errorf("could not acquire the git gc lock")
 }
 
 func checkpointRefs(ctx context.Context, root, session string) ([]checkpointRef, error) {

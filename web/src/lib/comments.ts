@@ -30,6 +30,10 @@ export type DiffScope =
       ref?: string;
       /** A turn's end checkpoint. */
       target?: string;
+      /** The turn was live when the comment was made; reopen the working-tree side. */
+      live?: boolean;
+      /** The first turn in an unborn repository: its base is the empty tree. */
+      emptyBase?: boolean;
     };
 
 /** Where picked words sit in the transcript: the message (its `data-items` id) and the offsets in its text. */
@@ -136,6 +140,7 @@ export function diffLabel(d: DiffScope): string {
     if (d.scope === "branch") return `branch since ${d.base}`;
     if (d.scope === "turn") {
       const base = d.baseHash ?? d.base;
+      if (d.emptyBase) return d.target ? `turn ..${d.target}` : "turn";
       return d.target ? `turn ${base}..${d.target}` : `turn ${base}`;
     }
     return `since ${d.baseHash ?? d.base}`;
@@ -145,14 +150,25 @@ export function diffLabel(d: DiffScope): string {
 
 /** A `Diff:` line's value read back (diffLabel's). */
 export function parseDiffLabel(v: string): DiffScope | null {
-  const d = /^(staged|unstaged|uncommitted|commit ([0-9a-f]+)|(branch since|since|turn) ([0-9a-f]+)(?:\.\.([0-9a-f]+))?)$/.exec(v.trim());
-  if (!d) return null;
-  if (d[2]) return { kind: "commit", sha: d[2] };
-  if (d[4]) {
-    const scope = d[3] === "since" ? "commit" : d[3] === "turn" ? "turn" : "branch";
-    return { kind: "review", scope, base: d[4], ...(scope !== "branch" ? { baseHash: d[4] } : {}), ...(scope === "turn" && d[5] ? { target: d[5] } : {}) };
+  const value = v.trim();
+  if (value === "staged" || value === "unstaged") return { kind: value };
+  if (value === "uncommitted") return { kind: "review", scope: "uncommitted" };
+  const commit = /^commit ([0-9a-f]+)$/.exec(value);
+  if (commit) return { kind: "commit", sha: commit[1] };
+  const since = /^(branch since|since) ([0-9a-f]+)$/.exec(value);
+  if (since) {
+    const scope = since[1] === "since" ? "commit" : "branch";
+    return { kind: "review", scope, base: since[2], ...(scope === "commit" ? { baseHash: since[2] } : {}) };
   }
-  return d[1] === "uncommitted" ? { kind: "review", scope: "uncommitted" } : { kind: d[1] as "staged" | "unstaged" };
+  const turn = /^turn (?:([0-9a-f]*)\.\.)?([0-9a-f]+)$/.exec(value);
+  if (turn) {
+    if (turn[1] !== undefined) {
+      const base = turn[1];
+      return { kind: "review", scope: "turn", base: base || turn[2], ...(base ? { baseHash: base } : { emptyBase: true }), target: turn[2] };
+    }
+    return { kind: "review", scope: "turn", base: turn[2], baseHash: turn[2], live: true };
+  }
+  return null;
 }
 
 /** The first `max` lines of some code for a card, with the indentation they all share taken off. */
@@ -314,7 +330,7 @@ export function openSpot(s: CodeSpot): boolean {
       openPanel({ kind: "review", mid: s.mid, sid: s.sid ?? "", cwd: s.cwd ?? "", scope: d.scope, at: { path: s.path, line: s.from, old: s.old } });
       return true;
     }
-    const base = d.scope === "branch" ? d.ref ?? d.baseHash ?? d.base : d.baseHash ?? d.base;
+    const base = d.emptyBase ? undefined : d.scope === "branch" ? d.ref ?? d.baseHash ?? d.base : d.baseHash ?? d.base;
     openPanel({
       kind: "review",
       mid: s.mid,
@@ -323,6 +339,7 @@ export function openSpot(s: CodeSpot): boolean {
       scope: d.scope,
       base,
       target: d.target,
+      live: d.live,
       at: { path: s.path, line: s.from, old: s.old },
     });
   } else if (s.diff) openPanel({ kind: "git", mid: s.mid, sid: s.sid ?? "", cwd: s.cwd ?? "", at: { path: s.path, diff: s.diff, line: s.from, to: s.to, old: s.old } });

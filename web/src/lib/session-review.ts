@@ -87,6 +87,10 @@ export function reviewTotals(files: readonly GitReviewFile[]): { added: number; 
 /** The scope as a comment's `Diff:` line says it: `uncommitted`, `branch since <hash>`, `since <hash>`, `turn <hash>`
  *  (Git's own short hash of the base, unique in the repository). */
 export function reviewDiff(res: Pick<GitReview, "scope" | "base" | "target">): DiffScope {
+  if (res.scope === "turn" && res.base.empty) {
+    const target = res.target?.hash;
+    return { kind: "review", scope: "turn", base: res.target?.short ?? target?.slice(0, 7) ?? "", emptyBase: true, ...(target ? { target } : {}) };
+  }
   const base = res.base.short || res.base.hash?.slice(0, 8) || res.target?.short || res.target?.hash?.slice(0, 8);
   if (res.scope === "uncommitted" || !base) return { kind: "review", scope: "uncommitted" };
   return {
@@ -96,6 +100,7 @@ export function reviewDiff(res: Pick<GitReview, "scope" | "base" | "target">): D
     ...(res.base.hash ? { baseHash: res.base.hash } : {}),
     ...(res.base.ref ? { ref: res.base.ref } : {}),
     ...(res.target?.hash ? { target: res.target.hash } : {}),
+    ...(res.scope === "turn" && res.target?.working ? { live: true } : {}),
   };
 }
 

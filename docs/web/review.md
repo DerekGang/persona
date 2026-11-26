@@ -35,6 +35,11 @@ directory and published only when the commit is complete. The end of turn N is t
 Captures are serialized per session; a new message waits for the previous turn's capture before it starts, and a turn
 that ends while a capture is running is queued. A node that starts after a turn ended captures the first `done`/`idle`
 state it sees, so a restart does not lose that turn.
+This gate covers Persona's message and resume paths. Raw `terminal.input` (typing directly in a terminal) is not gated:
+the terminal stream cannot wait for Git without blocking every keystroke, so a turn started by typing there is outside
+this guarantee.
+The snapshot pack is published before its ref, with Git's `gc.pid` lock held across the move and ref write; a failed
+ref write removes the newly published pack.
 
 A capture is skipped, with the reason in the node log, outside Git or over any of these pilot limits: 2 seconds,
 15,000 tracked files, 250 MiB of snapshot content, or 20 MiB of added or modified content. Repositories with more than
@@ -212,7 +217,7 @@ The comment block names its diff in the `Diff:` line (`lib/comments.ts` `DiffSco
 | uncommitted | `uncommitted` |
 | branch | `branch since <base short hash>` |
 | commit | `since <base short hash>` |
-| turn | `turn <base>..<target>` (the review's pinned hashes; a lone base is accepted for older comments) |
+| turn | `turn <base>..<target>` (the review's pinned hashes; `turn ..<target>` for an unborn repository's first turn; a lone base is accepted for older comments) |
 
 A sent or edited message reads it back (`parseDiffLabel`), and the comment card opens the Review panel at its line.
 

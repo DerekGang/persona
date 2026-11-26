@@ -35,8 +35,8 @@ const besideChat = () => typeof matchMedia === "undefined" || matchMedia("(min-w
 
 const targetKey = (session: string) => `persona.review.target:${session}`;
 
-function storedTarget(session: string, scope?: ReviewScope, base?: string, target?: string): ReviewTarget {
-  if (scope) return { scope, ...(base ? { base } : {}), ...(target ? { target } : {}) };
+function storedTarget(session: string, scope?: ReviewScope, base?: string, target?: string, live?: boolean): ReviewTarget {
+  if (scope) return { scope, ...(base ? { base } : {}), ...(target ? { target } : {}), ...(live ? { live } : {}) };
   try {
     const v = JSON.parse(localStorage.getItem(targetKey(session)) ?? "null") as ReviewTarget | null;
     if (v && (v.scope === "uncommitted" || v.scope === "branch" || v.scope === "turn" || (v.scope === "commit" && v.base))) {
@@ -53,18 +53,18 @@ type LoadRequest = { owner: GitReview; generation: number };
 
 /** `opened`: the panel as last opened (lib/panel.ts): an opening while the panel is already up (a changed-files card's
  *  Review or file) brings its `scope` and `at` with it. */
-export function ReviewPanel({ mid, sid, cwd, scope, base, target: targetHash, at, opened, onClose }: { mid: string; sid: string; cwd: string; scope?: ReviewScope; base?: string; target?: string; at?: ReviewSpot; opened?: object; onClose: () => void }) {
+export function ReviewPanel({ mid, sid, cwd, scope, base, target: targetHash, live, at, opened, onClose }: { mid: string; sid: string; cwd: string; scope?: ReviewScope; base?: string; target?: string; live?: boolean; at?: ReviewSpot; opened?: object; onClose: () => void }) {
   const session = `${mid}/${sid}`;
-  const [target, setTargetState] = useState<ReviewTarget>(() => storedTarget(session, scope, base, targetHash));
+  const [target, setTargetState] = useState<ReviewTarget>(() => storedTarget(session, scope, base, targetHash, live));
   const lastOpened = useRef(opened);
   useEffect(() => {
     if (opened === lastOpened.current) return;
     lastOpened.current = opened;
     if (scope) {
-      const next: ReviewTarget = { scope, ...(base ? { base } : {}), ...(targetHash ? { target: targetHash } : {}) };
-      setTargetState((t) => (t.scope === next.scope && t.base === next.base && t.target === next.target ? t : next));
+      const next: ReviewTarget = { scope, ...(base ? { base } : {}), ...(targetHash ? { target: targetHash } : {}), ...(live ? { live } : {}) };
+      setTargetState((t) => (t.scope === next.scope && t.base === next.base && t.target === next.target && t.live === next.live ? t : next));
     }
-  }, [opened, scope, base, targetHash]);
+  }, [opened, scope, base, targetHash, live]);
   const setTarget = (t: ReviewTarget) => {
     setTargetState(t);
     try {
@@ -110,7 +110,7 @@ export function ReviewPanel({ mid, sid, cwd, scope, base, target: targetHash, at
     if (target.scope === "commit" && !target.base) return;
     const ac = new AbortController();
     setLoading(true);
-    const request = target.scope === "turn" ? { ...target, session: sid, ...(liveTurn && !target.target ? { live: true } : {}) } : target;
+    const request = target.scope === "turn" ? { ...target, session: sid, ...((target.live || liveTurn) && !target.target ? { live: true } : {}) } : target;
     loadReview(mid, cwd, request, ac.signal)
       .then((r) => {
         if (ac.signal.aborted || generation !== reviewGeneration.current) return;

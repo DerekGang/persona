@@ -10,11 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/host"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -232,6 +235,15 @@ func TestCheckpointTurnReviewFindsShellChangesAndLiveWork(t *testing.T) {
 	if targetOnly.Base.Hash != first.Hash {
 		t.Fatalf("target-only base = %s, want previous checkpoint %s", targetOnly.Base.Hash, first.Hash)
 	}
+	legacy, err := r.node.gitReview(context.Background(), proto.GitReviewRequest{
+		Cwd: r.dir, Scope: proto.ReviewTurn, Session: "session-1", Base: r.git("rev-parse", "--short", first.Hash), Live: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Base.Hash != first.Hash || legacy.Target == nil || !legacy.Target.Working {
+		t.Fatalf("legacy turn short base: %+v", legacy)
+	}
 }
 
 func TestCheckpointFirstTurnComparesWithHead(t *testing.T) {
@@ -428,14 +440,20 @@ func TestCheckpointEndIsCapturedOffTheCallingPath(t *testing.T) {
 
 func TestCheckpointQueuesTheNextTurnAndWaitsBeforeItStarts(t *testing.T) {
 	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	cwds := []string{filepath.Join(r.dir, "a"), filepath.Join(r.dir, "b"), filepath.Join(r.dir, "c")}
+	for _, cwd := range cwds {
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	firstStarted := make(chan struct{})
 	release := make(chan struct{})
 	var mu sync.Mutex
-	calls := 0
-	r.node.checkpoints.capture = func(context.Context, string, string, int64) (checkpointResult, error) {
+	var calls []string
+	r.node.checkpoints.capture = func(_ context.Context, cwd, _ string, _ int64) (checkpointResult, error) {
 		mu.Lock()
-		calls++
-		n := calls
+		calls = append(calls, cwd)
+		n := len(calls)
 		mu.Unlock()
 		if n == 1 {
 			close(firstStarted)
@@ -443,11 +461,13 @@ func TestCheckpointQueuesTheNextTurnAndWaitsBeforeItStarts(t *testing.T) {
 		}
 		return checkpointResult{}, nil
 	}
-	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusWorking}})
-	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusDone}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: cwds[0], Status: proto.StatusWorking}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: cwds[0], Status: proto.StatusDone}})
 	<-firstStarted
-	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusWorking}})
-	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusDone}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: cwds[1], Status: proto.StatusWorking}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: cwds[1], Status: proto.StatusDone}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: cwds[2], Status: proto.StatusWorking}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: cwds[2], Status: proto.StatusDone}})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -468,10 +488,10 @@ func TestCheckpointQueuesTheNextTurnAndWaitsBeforeItStarts(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	mu.Lock()
-	got := calls
+	got := append([]string(nil), calls...)
 	mu.Unlock()
-	if got != 2 {
-		t.Fatalf("captures = %d, want the second turn queued after the first", got)
+	if !slices.Equal(got, cwds) {
+		t.Fatalf("captures = %v, want FIFO queue %v", got, cwds)
 	}
 }
 
@@ -495,9 +515,43 @@ func TestCheckpointSendWaitsForThePreviousCapture(t *testing.T) {
 	close(release)
 }
 
+func TestCheckpointSendContinuesAfterCapture(t *testing.T) {
+	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	r.node.hosts = host.NewRegistry()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	r.node.checkpoints.capture = func(context.Context, string, string, int64) (checkpointResult, error) {
+		close(started)
+		<-release
+		return checkpointResult{}, nil
+	}
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusWorking}})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusDone}})
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- r.node.send(ctx, "session-1", "next", nil, sendOpts{}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("send returned before the capture finished: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("send did not continue after the capture: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("send did not continue: %v", ctx.Err())
+	}
+}
+
 func TestCheckpointFirstDoneObservationIsCaptured(t *testing.T) {
 	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
-	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusDone}})
+	r.node.state.put("session-1", sessionState{Cwd: r.dir})
+	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Status: proto.StatusDone}})
 	deadline := time.Now().Add(5 * time.Second)
 	for len(checkpointRefsNow(t, r, "session-1")) == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -596,5 +650,84 @@ func TestCheckpointRefFailureRemovesThePublishedPack(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Fatalf("failed ref write left packs: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestCheckpointGCLockBlocksConcurrentGC(t *testing.T) {
+	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	gitDir := strings.TrimSpace(r.git("rev-parse", "--absolute-git-dir"))
+	release, err := acquireCheckpointGCLock(gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", r.dir, "gc", "--prune=now")
+	if err := cmd.Run(); err == nil {
+		t.Fatal("git gc ran while the checkpoint lock was held")
+	}
+	release()
+	if err := exec.Command("git", "-C", r.dir, "gc", "--prune=now").Run(); err != nil {
+		t.Fatalf("git gc did not run after the lock was released: %v", err)
+	}
+}
+
+func TestCheckpointCleanupKeepsALiveProcessTemp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep is not a portable test helper here")
+	}
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	}()
+	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	gitDir := strings.TrimSpace(r.git("rev-parse", "--absolute-git-dir"))
+	live := filepath.Join(gitDir, fmt.Sprintf("persona-checkpoint-index-%d-live", child.Process.Pid))
+	if err := os.WriteFile(live, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupCheckpointTemps(gitDir)
+	if _, err := os.Stat(live); err != nil {
+		t.Fatalf("live process temp was removed: %v", err)
+	}
+}
+
+func TestCheckpointLargeWorkingBlobIsCompared(t *testing.T) {
+	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	big := strings.Repeat("x", 33<<20)
+	r.write("big.bin", big)
+	r.git("add", "big.bin")
+	r.git("commit", "-q", "-m", "add big")
+	base := r.git("rev-parse", "HEAD")
+	r.git("rm", "--cached", "-q", "big.bin")
+	st, err := os.Lstat(filepath.Join(r.dir, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, ok := checkpointBlob(context.Background(), r.dir, base, "big.bin")
+	if !ok {
+		t.Fatal("base blob not found")
+	}
+	got, err := workingBlob(context.Background(), r.dir, "big.bin", st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("large working blob = %s, want %s", got, want)
+	}
+}
+
+func TestGitReviewUncommittedKeepsCachedRemoval(t *testing.T) {
+	r := newReviewRepo(t, map[string]string{"tracked.txt": "same\n"})
+	r.git("rm", "--cached", "-q", "tracked.txt")
+	status := r.git("status", "--porcelain")
+	if !strings.Contains(status, "D  tracked.txt") || !strings.Contains(status, "?? tracked.txt") {
+		t.Fatalf("git status = %q", status)
+	}
+	f := fileOf(t, r.review(proto.ReviewUncommitted, ""), "tracked.txt")
+	if f.Status != "deleted" {
+		t.Fatalf("uncommitted cached removal = %+v, want deleted", f)
 	}
 }
