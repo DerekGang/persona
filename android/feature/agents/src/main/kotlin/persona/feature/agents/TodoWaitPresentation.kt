@@ -134,20 +134,19 @@ internal fun TodoWaitSection(
                 )
             }
 
-            detail.waitingOn?.let { waitingOn ->
-                val id = detail.handoffTodoId
-                if (id != null) {
-                    WaitFact(stringResource(R.string.agents_todo_wait_waiting_on)) {
-                        JTextButton(
-                            waitingOn,
-                            { onOpenTodo(id) },
-                            modifier = Modifier.testTag("todo-wait-handoff"),
-                            icon = PhIcons.ArrowSquareOut,
-                        )
-                    }
-                } else {
-                    WaitFact(stringResource(R.string.agents_todo_wait_waiting_on), waitingOn)
+            val handoffId = detail.handoffTodoId
+            val waitingOn = detail.waitingOn
+            if (handoffId != null) {
+                WaitFact(stringResource(R.string.agents_todo_wait_waiting_on)) {
+                    JTextButton(
+                        waitingOn ?: handoffId,
+                        { onOpenTodo(handoffId) },
+                        modifier = Modifier.testTag("todo-wait-handoff"),
+                        icon = PhIcons.ArrowSquareOut,
+                    )
                 }
+            } else if (waitingOn != null) {
+                WaitFact(stringResource(R.string.agents_todo_wait_waiting_on), waitingOn)
             }
             detail.reason?.let { WaitFact(stringResource(R.string.agents_todo_wait_details), it) }
             detail.blockersText?.let { WaitFact(stringResource(R.string.agents_todo_wait_blocked_by), it) }

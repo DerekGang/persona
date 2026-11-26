@@ -1,5 +1,8 @@
 package persona.feature.agents
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -44,21 +47,26 @@ class TodoWaitScreenTest {
         rule.waitForIdle()
     }
 
-    private fun showDetail(todo: Todo, onOpenTodo: (String) -> Unit = {}) {
+    private fun showDetail(todo: Todo, onOpenTodo: (String) -> Unit = {}, onUri: (String) -> Unit = {}) {
+        val uriHandler = object : UriHandler {
+            override fun openUri(uri: String) = onUri(uri)
+        }
         rule.setContent {
-            PersonaTheme(reduceMotion = true) {
-                TodoDetailScreen(
-                    todo.id,
-                    listOf(todo),
-                    machines = emptyList(),
-                    sessions = emptyList(),
-                    tasks = null,
-                    onBack = {},
-                    onOpenSession = {},
-                    onHandOff = {},
-                    onOpenTodo = onOpenTodo,
-                    now = now,
-                )
+            CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                PersonaTheme(reduceMotion = true) {
+                    TodoDetailScreen(
+                        todo.id,
+                        listOf(todo),
+                        machines = emptyList(),
+                        sessions = emptyList(),
+                        tasks = null,
+                        onBack = {},
+                        onOpenSession = {},
+                        onHandOff = {},
+                        onOpenTodo = onOpenTodo,
+                        now = now,
+                    )
+                }
             }
         }
         rule.waitForIdle()
@@ -93,7 +101,49 @@ class TodoWaitScreenTest {
     }
 
     @Test
+    fun rowShowsExternalEventSummary() {
+        val wait = TodoWait(
+            kind = TodoWaitKind.ExternalEvent,
+            waitingOn = "App Store Review",
+            reason = "Waiting for App Store review to finish",
+            until = "2026-11-21T09:00:00Z",
+        )
+        showRow(todo(wait))
+
+        rule.onNodeWithText("Waiting for App Store review to finish", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("Until", substring = true, useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun rowShowsDateSummary() {
+        val wait = TodoWait(
+            kind = TodoWaitKind.Date,
+            waitingOn = "Launch day",
+            reason = "Wait until launch day morning",
+            wakeAt = "2026-11-25T09:00:00Z",
+        )
+        showRow(todo(wait))
+
+        rule.onNodeWithText("Wait until launch day morning", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("Wakes", substring = true, useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun rowShowsParkedSummary() {
+        val wait = TodoWait(
+            kind = TodoWaitKind.Parked,
+            reason = "Deferred until after quarterly review",
+            until = "2026-11-22T09:00:00Z",
+        )
+        showRow(todo(wait))
+
+        rule.onNodeWithText("Deferred until after quarterly review", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("Until", substring = true, useUnmergedTree = true).assertExists()
+    }
+
+    @Test
     fun detailShowsEveryServerFactAndLinks() {
+        val opened = mutableListOf<String>()
         val wait = TodoWait(
             kind = TodoWaitKind.PersonReply,
             waitingOn = "Alex",
@@ -111,7 +161,7 @@ class TodoWaitScreenTest {
                 request = "Asked whether the conference room is open on Nov 25",
             ),
         )
-        showDetail(todo(wait))
+        showDetail(todo(wait), onUri = { opened += it })
 
         rule.onNodeWithTag("todo-wait-section", useUnmergedTree = true).assertExists()
         rule.onNodeWithText("Waiting on", useUnmergedTree = true).assertExists()
@@ -125,6 +175,13 @@ class TodoWaitScreenTest {
         rule.onNodeWithTag("todo-wait-contact", useUnmergedTree = true).assertExists()
         rule.onNodeWithTag("todo-wait-source", useUnmergedTree = true).assertExists()
         rule.onNodeWithText("Waiting since", substring = true, useUnmergedTree = true).assertExists()
+
+        rule.onNodeWithTag("todo-wait-contact", useUnmergedTree = true).performClick()
+        rule.onNodeWithTag("todo-wait-source", useUnmergedTree = true).performClick()
+        assertEquals(
+            listOf("https://mail.example.com/threads/1", "https://github.com/example/app/pull/418"),
+            opened,
+        )
     }
 
     @Test
@@ -152,8 +209,23 @@ class TodoWaitScreenTest {
             reason = "Waiting for integration tests",
             handoffTodoId = TodoID("todo_api_schema"),
         )
-        showDetail(todo(wait)) { opened = it }
+        showDetail(todo(wait), onOpenTodo = { opened = it })
 
+        rule.onNodeWithTag("todo-wait-handoff", useUnmergedTree = true).performClick()
+        assertEquals("todo_api_schema", opened)
+    }
+
+    @Test
+    fun handoffWithOnlyIdFallsBackToTheIdAndOpensTheLinkedTodo() {
+        var opened: String? = null
+        val wait = TodoWait(
+            kind = TodoWaitKind.TodoHandoff,
+            reason = "Waiting for integration tests",
+            handoffTodoId = TodoID("todo_api_schema"),
+        )
+        showDetail(todo(wait), onOpenTodo = { opened = it })
+
+        rule.onNodeWithText("todo_api_schema", useUnmergedTree = true).assertExists()
         rule.onNodeWithTag("todo-wait-handoff", useUnmergedTree = true).performClick()
         assertEquals("todo_api_schema", opened)
     }
