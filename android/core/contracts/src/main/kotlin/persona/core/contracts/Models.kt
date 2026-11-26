@@ -4,6 +4,7 @@ package persona.core.contracts
 
 import persona.core.contracts.CoreText.Key
 import persona.core.contracts.CoreText
+import persona.core.contracts.api.ExtensionView
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.KeepGeneratedSerializer
@@ -1117,6 +1118,8 @@ data class Item(
     val narration: Boolean? = null,
     @SerialName("codex_heartbeat_quiet") val codexHeartbeatQuiet: Boolean? = null,
     @SerialName("source_fingerprint") val sourceFingerprint: String? = null,
+    /** Out-of-band, read-only views rendered beside this item. */
+    @SerialName("tool_views") val toolViews: List<ExtensionView> = emptyList(),
 )
 
 /**

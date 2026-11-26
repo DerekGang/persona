@@ -96,7 +96,6 @@ class AgentSpaceTest {
         assertEquals(setOf("elsewhere"), machinePinned.rows.map { it.session.sessionId }.toSet())
         assertEquals("/work/main/site", machinePinned.projectFolder?.path)
     }
-
     @Test fun searchingByMachineKeepsOnlyMatchingProjectsAndRows() {
         fun row(id: String, spaceId: String, cwd: String, title: String) =
             AgentSession(Session(machineId = "mac", sessionId = id, state = "working", spaceId = spaceId,
