@@ -50,9 +50,10 @@ func ownerReportItem(at time.Time, text string) proto.Item {
 func TestOwnerInstructionKeepsLatestPerSession(t *testing.T) {
 	v := &Supervision{}
 	first := time.Now().UTC()
+	second := first.Add(-time.Minute)
 	long := strings.Repeat("x", ownerInstructionExcerptMax+50)
 	if !v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputApp, "m1", "first", first) ||
-		!v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputTerminal, "m2", long, first.Add(time.Second)) ||
+		!v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputTerminal, "m2", long, second) ||
 		!v.recordOwnerInstruction("box", "s2", assistantwire.OwnerInputApp, "m3", "other session", first) {
 		t.Fatal("owner instructions were not recorded")
 	}
@@ -61,13 +62,31 @@ func TestOwnerInstructionKeepsLatestPerSession(t *testing.T) {
 	}
 	work := v.ownerSessionWork("box", "s1")
 	if work == nil || work.Instruction == nil || work.Instruction.Excerpt != long[:ownerInstructionExcerptMax]+"…" ||
-		!work.Instruction.At.Equal(first.Add(time.Second)) || work.Instruction.Source != assistantwire.OwnerInputTerminal ||
-		work.Instruction.ClientMsgID != "m2" {
+		!work.Instruction.At.Equal(second) || work.Instruction.Source != assistantwire.OwnerInputTerminal ||
+		work.Instruction.ClientMsgID != "m2" || !work.Instruction.NeedsReport {
 		t.Fatalf("latest clipped instruction = %+v", work)
 	}
 	other := v.ownerSessionWork("box", "s2")
 	if other == nil || other.Instruction == nil || other.Instruction.Excerpt != "other session" {
 		t.Fatalf("other session = %+v", other)
+	}
+}
+
+func TestOwnerInstructionRedeliveryDoesNotRearmAfterAssignment(t *testing.T) {
+	v := &Supervision{}
+	at := time.Now().UTC()
+	if !v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputApp, "m1", "Keep the check open.", at) {
+		t.Fatal("owner instruction was not recorded")
+	}
+	if !v.recordAssignment("box", "s1", at.Add(time.Minute)) {
+		t.Fatal("Persona assignment was not recorded")
+	}
+	if v.recordOwnerInstruction("box", "s1", assistantwire.OwnerInputApp, "m1", "Keep the check open.", at.Add(-time.Hour)) {
+		t.Fatal("a redelivery of the superseded instruction rearmed the guard")
+	}
+	work := v.ownerSessionWork("box", "s1")
+	if work == nil || work.Instruction == nil || work.Instruction.NeedsReport {
+		t.Fatalf("redelivery changed the superseded instruction: %+v", work)
 	}
 }
 
@@ -108,6 +127,38 @@ func TestOwnerInstructionRequiresLaterSettledReport(t *testing.T) {
 	}
 	if got := todoNow(s, todo.ID); got.DoneAt == nil {
 		t.Fatal("the task did not close after the later assignment")
+	}
+}
+
+func TestOwnerInstructionUsesAssignmentOrderAcrossClockSkew(t *testing.T) {
+	s, f, todo, at := ownerInstructionTask(t)
+	s.notePersonaAssignment(context.Background(), "box", "s1", at.Add(time.Minute))
+	if work := todoNow(s, todo.ID).Supervision.ownerSessionWork("box", "s1"); work == nil || work.AssignedAt.IsZero() {
+		t.Fatalf("prior Persona assignment was not recorded: %+v", work)
+	}
+
+	// The linked node's clock is a day ahead of the hub. That must not make the owner's later event look older than
+	// Persona's assignment.
+	s.todos.mu.Lock()
+	s.todos.todos[todo.ID].Agents[0].LinkedAt = at.Add(24 * time.Hour)
+	s.todos.mu.Unlock()
+	s.noteOwnerInstruction(context.Background(), SessionRef{MachineID: "box", SessionID: "s1"}, "Keep the migration check open.", assistantwire.OwnerInputApp, "owner-message-clock-skew", at)
+	if work := todoNow(s, todo.ID).Supervision.ownerSessionWork("box", "s1"); work == nil || work.Instruction == nil || !work.Instruction.NeedsReport {
+		t.Fatalf("owner instruction after assignment did not require a report: %+v", work)
+	}
+
+	f.setItems(ownerReportItem(at.Add(-time.Minute), ownerReport("done", "", "")))
+	if _, err := acceptOwnerInstructionTask(t, s, todo, nil); err == nil ||
+		!strings.Contains(err.Error(), "owner instruction") || !strings.Contains(err.Error(), "no assistant reply or work report followed") {
+		t.Fatalf("clock skew bypassed the owner-instruction guard: %v", err)
+	}
+
+	s.notePersonaAssignment(context.Background(), "box", "s1", at.Add(2*time.Minute))
+	if work := todoNow(s, todo.ID).Supervision.ownerSessionWork("box", "s1"); work == nil || work.Instruction == nil || work.Instruction.NeedsReport {
+		t.Fatalf("later Persona assignment did not clear the report requirement: %+v", work)
+	}
+	if _, err := acceptOwnerInstructionTask(t, s, todo, nil); err != nil {
+		t.Fatalf("later Persona assignment did not clear the guard: %v", err)
 	}
 }
 
@@ -241,7 +292,7 @@ func TestOwnerInstructionSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	work := todoNow(reloaded, todo.ID).Supervision.ownerSessionWork("box", "s1")
-	if work == nil || work.AssignedAt.IsZero() || work.Instruction == nil || work.Instruction.Excerpt != text || work.Instruction.Source != assistantwire.OwnerInputApp {
+	if work == nil || work.Instruction == nil || !work.Instruction.NeedsReport || work.Instruction.Excerpt != text || work.Instruction.Source != assistantwire.OwnerInputApp {
 		t.Fatalf("owner instruction did not survive restart: %+v", work)
 	}
 }
@@ -255,7 +306,7 @@ func TestTodoSupervisionPersistsOwnerWork(t *testing.T) {
 	}
 	raw, _ := json.Marshal([]OwnerSessionWork{{
 		MachineID: "box", SessionID: "s1", AssignedAt: now.Add(time.Minute),
-		Instruction: &OwnerInstruction{At: now, Source: assistantwire.OwnerInputTerminal, Excerpt: "keep this instruction"},
+		Instruction: &OwnerInstruction{At: now, Source: assistantwire.OwnerInputTerminal, Excerpt: "keep this instruction", NeedsReport: true},
 	}})
 	if err := database.PutTodoSupervision(ctx, db.TodoSupervisionRow{TodoID: "owner-work", Supervisor: "conv1", Reviews: json.RawMessage("[]"), OwnerWork: raw, UpdatedAt: now}); err != nil {
 		t.Fatal(err)

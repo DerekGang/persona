@@ -13,8 +13,8 @@ import (
 
 // The owner can keep instructing an Agent after Persona handed it a task. The runtime only knows the turn that was
 // running when the Agent stops, so an instruction that starts no new turn can disappear from a completion judgment.
-// Keep the latest instruction and the latest Persona assignment per linked session, then require the instruction,
-// when it is newer than the assignment, to be followed by a settled work report before a bare supervisor acceptance.
+// Keep the latest instruction per linked session and whether a later Persona assignment has superseded it, then require
+// an instruction that still needs a report to be followed by a settled work report before a bare supervisor acceptance.
 
 const (
 	ownerInstructionExcerptMax = 200
@@ -23,13 +23,16 @@ const (
 
 // OwnerInstruction is the short, verified excerpt of an owner's message to one Agent session.
 type OwnerInstruction struct {
-	At          time.Time `json:"at"`
+	At          time.Time `json:"at"`     // display and transcript matching only; never ordered against an assignment
 	Source      string    `json:"source"` // app or terminal
 	ClientMsgID string    `json:"client_msg_id,omitempty"`
 	Excerpt     string    `json:"excerpt"`
+	// NeedsReport is an explicit causal marker: a later Persona assignment clears it, while a later owner message sets
+	// it again. It deliberately does not compare clocks from the hub and the linked node.
+	NeedsReport bool `json:"needs_report,omitempty"`
 }
 
-// OwnerSessionWork keeps the two independent clocks for one linked session.
+// OwnerSessionWork keeps the latest instruction and Persona assignment for one linked session.
 type OwnerSessionWork struct {
 	MachineID   string            `json:"machine_id"`
 	SessionID   string            `json:"session_id"`
@@ -62,14 +65,12 @@ func (v *Supervision) recordOwnerInstruction(machine, session, source, clientMsg
 		v.OwnerWork = append(v.OwnerWork, OwnerSessionWork{MachineID: machine, SessionID: session})
 		work = &v.OwnerWork[len(v.OwnerWork)-1]
 	}
-	if work.Instruction != nil && work.Instruction.At.After(at) {
+	// Only the message's stable identity proves a redelivery. Its timestamp cannot order it against an assignment.
+	if work.Instruction != nil && clientMsgID != "" && work.Instruction.ClientMsgID == clientMsgID &&
+		work.Instruction.Source == source && work.Instruction.Excerpt == excerpt {
 		return false
 	}
-	if work.Instruction != nil && work.Instruction.At.Equal(at) &&
-		work.Instruction.Source == source && work.Instruction.ClientMsgID == clientMsgID && work.Instruction.Excerpt == excerpt {
-		return false
-	}
-	work.Instruction = &OwnerInstruction{At: at, Source: source, ClientMsgID: clientMsgID, Excerpt: excerpt}
+	work.Instruction = &OwnerInstruction{At: at, Source: source, ClientMsgID: clientMsgID, Excerpt: excerpt, NeedsReport: true}
 	return true
 }
 
@@ -87,6 +88,9 @@ func (v *Supervision) recordAssignment(machine, session string, at time.Time) bo
 		return false
 	}
 	work.AssignedAt = at
+	if work.Instruction != nil {
+		work.Instruction.NeedsReport = false
+	}
 	return true
 }
 
@@ -151,16 +155,8 @@ func (s *Service) noteOwnerInstruction(ctx context.Context, ref SessionRef, text
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	var linkedAt time.Time
-	for _, a := range t.Agents {
-		if a.MachineID == ref.MachineID && a.SessionID == ref.SessionID {
-			linkedAt = a.LinkedAt
-			break
-		}
-	}
 	if err := s.updateOwnerWork(ctx, t.ID, func(v *Supervision) bool {
-		changed := !linkedAt.IsZero() && v.recordAssignment(ref.MachineID, ref.SessionID, linkedAt)
-		return v.recordOwnerInstruction(ref.MachineID, ref.SessionID, source, clientMsgID, text, at) || changed
+		return v.recordOwnerInstruction(ref.MachineID, ref.SessionID, source, clientMsgID, text, at)
 	}); err != nil {
 		s.logf("task %s: owner instruction: %v", t.ID, err)
 	}
@@ -178,10 +174,10 @@ func (s *Service) notePersonaAssignment(ctx context.Context, machine, session st
 	}
 }
 
-// ownerInstructionBlock refuses a bare acceptance while any current linked session has an owner instruction newer
-// than Persona's latest assignment to it and no later settled work report. A clean closeout after the instruction is
-// the report from that round. An instruction folded into new completion criteria advances the assignment, so the
-// existing per-criterion guard evaluates it instead.
+// ownerInstructionBlock refuses a bare acceptance while any current linked session has an owner instruction that a
+// later Persona assignment has not superseded and that has no later settled work report. A clean closeout after the
+// instruction is the report from that round. An instruction folded into new completion criteria advances the
+// assignment, so the existing per-criterion guard evaluates it instead.
 func (s *Service) ownerInstructionBlock(ctx context.Context, t Todo) (matched, why string) {
 	if cur, ok := s.todoNow(t.ID); ok {
 		t = cur
@@ -194,23 +190,16 @@ func (s *Service) ownerInstructionBlock(ctx context.Context, t Todo) (matched, w
 			continue
 		}
 		work := t.Supervision.ownerSessionWork(a.MachineID, a.SessionID)
-		if work == nil || work.Instruction == nil {
+		if work == nil || work.Instruction == nil || !work.Instruction.NeedsReport {
 			continue
-		}
-		assigned := work.AssignedAt
-		if assigned.IsZero() || a.LinkedAt.After(assigned) {
-			assigned = a.LinkedAt
 		}
 		instruction := *work.Instruction
-		if !instruction.At.After(assigned) {
-			continue
-		}
 		reason := s.ownerInstructionReport(ctx, a.MachineID, a.SessionID, instruction)
 		if reason == "" {
 			continue
 		}
 		return "owner_instruction_newer", fmt.Sprintf(
-			"owner instruction %q (%s, %s) is newer than Persona's last assignment to that Agent and remains unresolved: %s",
+			"owner instruction %q (%s, %s) remains unresolved after Persona's last assignment: %s",
 			instruction.Excerpt, instruction.Source, instruction.At.UTC().Format(time.RFC3339), reason)
 	}
 	return "", ""
