@@ -218,6 +218,7 @@ type Node struct {
 	fulls               map[string]*fullClient            // client id -> a full herdr client running for the web (fullclient.go)
 	focus               focusState                        // focus sync for the full views (focus.go)
 	suggests            map[string]*suggestState          // session id -> Claude's suggested next message (suggestion.go)
+	checkpoints         checkpointTracker                 // per-turn working-tree snapshots (checkpoint.go)
 	driving             map[string]bool                   // session id -> Persona is working its TUI (a picker it opened is not "blocked")
 	blockedAt           map[string]time.Time              // session id -> when host status first became blocked without clearing
 	dialogs             paneDialogs                       // pane -> the dialog its last screen read showed (dialogstatus.go)

@@ -9,13 +9,13 @@ vi.hoisted(() => {
   (globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s.replace(/["\\]/g, "\\$&") };
 });
 
-const calls = vi.hoisted(() => ({ targets: [] as { scope: string }[], fail: false }));
+const calls = vi.hoisted(() => ({ targets: [] as { scope: string; session?: string }[], fail: false }));
 vi.mock("../../lib/session-review", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../lib/session-review")>();
   return {
     ...real,
-    loadReview: (_mid: string, _cwd: string, target: { scope: string }) => {
-      calls.targets.push({ scope: target.scope });
+    loadReview: (_mid: string, _cwd: string, target: { scope: string; session?: string }) => {
+      calls.targets.push({ scope: target.scope, session: target.session });
       if (calls.fail) return Promise.reject(new Error("not a Git repository"));
       return Promise.resolve({
         root: "/w",
@@ -68,6 +68,23 @@ describe("the review panel opened again", () => {
     await act(async () => { await new Promise((r) => requestAnimationFrame(() => r(null))); });
     const went = (Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).mock.contexts as Element[];
     expect(went.some((el) => el.getAttribute("data-diff-path") === "src/a.ts")).toBe(true);
+  });
+
+  it("asks for the latest turn with the session", async () => {
+    draw({ scope: "turn", opened: {} });
+    await settle();
+    expect(calls.targets.at(-1)).toEqual({ scope: "turn", session: "s" });
+  });
+
+  it("offers This turn beside the other review scopes", async () => {
+    draw({ opened: {} });
+    await settle();
+    const tabs = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs).toHaveLength(4);
+    const button = tabs[2];
+    await act(async () => button!.click());
+    await settle();
+    expect(calls.targets.at(-1)).toEqual({ scope: "turn", session: "s" });
   });
 
   it("opens a card's file the review does not list in the files panel instead, preserving back stack", async () => {

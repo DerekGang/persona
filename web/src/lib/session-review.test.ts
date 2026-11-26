@@ -38,6 +38,7 @@ describe("the review's address", () => {
   it("carries the scope, the base and each path", () => {
     expect(reviewURL("mac 1", "/p q", { scope: "commit", base: "abc" }, ["a b.ts", "c.ts"])).toBe("/machines/mac%201/git/review?cwd=%2Fp+q&scope=commit&base=abc&path=a+b.ts&path=c.ts");
     expect(reviewURL("m", "/p", { scope: "uncommitted" })).toBe("/machines/m/git/review?cwd=%2Fp&scope=uncommitted");
+    expect(reviewURL("m", "/p", { scope: "turn", session: "s 1", base: "def", target: "abc" }, ["a.ts"])).toBe("/machines/m/git/review?cwd=%2Fp&scope=turn&base=def&session=s+1&target=abc&path=a.ts");
   });
 });
 
@@ -69,6 +70,7 @@ describe("a comment of the review", () => {
     expect(diff).toEqual({ kind: "review", scope: "branch", base: "0123456" });
     expect(reviewDiff({ ...res, scope: "uncommitted" })).toEqual({ kind: "review", scope: "uncommitted" });
     expect(reviewDiff({ scope: "commit", base: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "commit", base: "89abcde" });
+    expect(reviewDiff({ scope: "turn", base: { hash: "0123456789", short: "0123456" }, target: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "turn", base: "0123456" });
   });
 
   it("carries the diff's rows of its lines, the removed ones between them too", () => {
@@ -139,6 +141,7 @@ describe("the review as a message", () => {
       ["uncommitted", { kind: "review", scope: "uncommitted" }],
       ["since 89abcde", { kind: "review", scope: "commit", base: "89abcde" }],
       ["branch since 0123456", { kind: "review", scope: "branch", base: "0123456" }],
+      ["turn 0123456", { kind: "review", scope: "turn", base: "0123456" }],
       ["commit 1234abcd", { kind: "commit", sha: "1234abcd" }],
       ["staged", { kind: "staged" }],
     ] as const)
