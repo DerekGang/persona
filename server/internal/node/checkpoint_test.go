@@ -48,6 +48,25 @@ func checkpointTempNames(t *testing.T, r *reviewRepo) []string {
 	return out
 }
 
+func waitForCheckpointRefs(t *testing.T, r *reviewRepo, session string, want int) []checkpointRef {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		refs := checkpointRefsNow(t, r, session)
+		if len(refs) >= want {
+			return refs
+		}
+		select {
+		case <-deadline.C:
+			return refs
+		case <-ticker.C:
+		}
+	}
+}
+
 func worktreeDigest(t *testing.T, root string) string {
 	t.Helper()
 	h := sha256.New()
@@ -450,11 +469,7 @@ func TestCheckpointEndIsCapturedOffTheCallingPath(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("turn-end handling blocked for %s", elapsed)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for len(checkpointRefsNow(t, r, "session-1")) == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	refs := checkpointRefsNow(t, r, "session-1")
+	refs := waitForCheckpointRefs(t, r, "session-1", 1)
 	if len(refs) != 1 {
 		t.Fatalf("turn-end refs: %+v", refs)
 	}
@@ -620,11 +635,7 @@ func TestCheckpointFirstDoneObservationIsCaptured(t *testing.T) {
 	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
 	r.node.state.put("session-1", sessionState{Cwd: r.dir})
 	r.node.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Status: proto.StatusDone}})
-	deadline := time.Now().Add(5 * time.Second)
-	for len(checkpointRefsNow(t, r, "session-1")) == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if refs := checkpointRefsNow(t, r, "session-1"); len(refs) != 1 {
+	if refs := waitForCheckpointRefs(t, r, "session-1", 1); len(refs) != 1 {
 		t.Fatalf("first done observation refs: %+v", refs)
 	}
 }
