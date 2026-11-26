@@ -39,6 +39,7 @@ func TestOpenOwnSettingsPrefill(t *testing.T) {
 		`{}`,
 		`{"host":"new.example.com"}`,
 		`{"port":8080,"enabled":true,"repos":["~/code"],"limits":{"max":5,"label":"Main"}}`,
+		`{"host":"` + strings.Repeat("例", 500) + `"}`,
 	} {
 		if err := checkOpenURL("example-gateway", m, page, "", settingsPrefillLink("example-gateway", patch)); err != nil {
 			t.Errorf("%s: %v", patch, err)

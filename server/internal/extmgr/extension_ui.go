@@ -35,7 +35,7 @@ const uiTimeout = 20 * time.Second
 
 const (
 	settingsPrefillMost    = 2 << 10
-	settingsPrefillURLMost = 4 << 10
+	settingsPrefillURLMost = 32 << 10
 )
 
 // UIPlace is one thing a plugin draws, as the apps list it.
