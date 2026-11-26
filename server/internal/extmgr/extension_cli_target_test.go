@@ -82,6 +82,9 @@ func TestExtensionTargetInheritedHome(t *testing.T) {
 	srv, requests := targetFakeHub(t)
 	home := t.TempDir()
 	writeTargetHub(t, home, strings.TrimPrefix(srv.URL, "http://"))
+	otherHome := t.TempDir()
+	t.Setenv("HOME", otherHome)
+	writeTargetHub(t, filepath.Join(otherHome, ".persona"), strings.TrimPrefix(srv.URL, "http://"))
 	t.Setenv("PERSONA_HOME", home)
 
 	out, err := runTargetCommand(t, "", "install", "dir:/tmp/example", "--yes")
