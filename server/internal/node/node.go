@@ -47,6 +47,8 @@ type Node struct {
 	segmentStarts segmentStarts
 	segmentInputs segmentInputs
 	runtimeUsage  runtimeUsageReports
+	// usageDirs resolves the directories the usage names, while this connection's manager keeps them (usage_dirs.go).
+	usageDirs usageDirsOn
 
 	// Only the manager's initial node.info can negotiate source delivery on this connection.
 	managerInfoOnce sync.Once
@@ -648,6 +650,7 @@ func (n *Node) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	}
 	go n.meterUsage(ctx, n.stateReady)
 	go n.backfillUsage(ctx, n.stateReady) // the days before the hub's history, once (usage_backfill.go)
+	go n.resplitUsage(ctx, n.stateReady)  // the last week split by directory, once (usage_resplit.go)
 	go n.runUsageWindows(ctx)
 	go n.sampleMetrics(ctx)
 	go n.watchPorts(ctx)
@@ -1004,7 +1007,7 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		ResumeOnly       bool                          `json:"resume_only"`
 		OnlyRunning      bool                          `json:"only_running"` // assistant.compact: refuse not_running rather than start the process
 		IsMain           bool                          `json:"is_main"`
-		MainCompact      int                           `json:"main_compact_window"` // assistant.send, session.send, assistant.warm: with is_main (model_config.go)
+		MainCompact      int                           `json:"main_compact_window"` // assistant.send, session.send, assistant.warm: the main or a leader conversation's (model_config.go)
 		FollowsSetting   bool                          `json:"follows_setting"`
 		Interject        bool                          `json:"interject_background"`
 		Public           bool                          `json:"public"` // a public mention turn: no owner live snapshot on this input
