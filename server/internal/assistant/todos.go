@@ -1036,6 +1036,7 @@ func (s *Service) todoRoutes() {
 	s.todoRetitleRoute()
 	s.todoReorganizeRoute()
 	s.todoDecisionsBatchRoute()
+	s.todoBlockersRoutes()
 	s.todoImportRoutes()
 	s.todoViewRoutes()
 	s.todoHandoffRoutes()
@@ -1081,10 +1082,13 @@ func (s *Service) todoRoutes() {
 		var board *todoBoardProjection
 		if !isExtension {
 			sharedBlockers = p.sharedBlockers()
-			if cfg := s.settings(r.Context()); !paged && cfg.todosV2On() {
-				// The board is the same complete projection as Counts. The closed_limit option bounds the rows a list
-				// client has to parse; it does not silently create a second, smaller set of board totals.
-				board = buildTodoBoardProjectionWithOptions(list, s.todoBoardDirectionLabels(r.Context()), cfg.todosV2FoldChildrenOn())
+			if cfg := s.settings(r.Context()); cfg.todosV2On() {
+				sharedBlockers = mergePersistedSharedBlockers(list, p, sharedBlockers)
+				if !paged {
+					// The board is the same complete projection as Counts. The closed_limit option bounds the rows a
+					// list client has to parse; it does not silently create a second, smaller set of board totals.
+					board = buildTodoBoardProjectionWithOptions(list, s.todoBoardDirectionLabels(r.Context()), cfg.todosV2FoldChildrenOn())
+				}
 			}
 		}
 		var closedNext string
