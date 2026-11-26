@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -560,6 +561,48 @@ func TestCheckpointSendContinuesAfterCapture(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatalf("send did not continue: %v", ctx.Err())
+	}
+}
+
+func TestCheckpointSendSucceedsAfterCapture(t *testing.T) {
+	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	n, f, _ := herdrNode(t)
+	f.setScreen("w1:p1", cxEmpty)
+	seedAgents(t, n, f, agentOf("codex", "session-1", proto.StatusIdle, "w1:p1", "w1:t1", "w1", r.dir, ""))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	n.checkpoints.capture = func(context.Context, string, string, int64) (checkpointResult, error) {
+		close(started)
+		<-release
+		return checkpointResult{}, nil
+	}
+	n.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusWorking}})
+	n.noteCheckpointEnds([]proto.Session{{SessionID: "session-1", Cwd: r.dir, Status: proto.StatusDone}})
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	params, err := json.Marshal(map[string]any{"session_id": "session-1", "text": "next"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := n.handle(ctx, "session.send", params)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("send returned before the capture finished: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("send after capture: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("send did not finish: %v", ctx.Err())
 	}
 }
 

@@ -6588,7 +6588,7 @@ At most one quote block starts a message (the quoted words; for a task card, the
 
 > Code comment 2                ← code comment: number, location, optional Side / Diff / Truncated, fenced code, comment
 > File: src/app.ts:12-14        ← path relative to the session directory (original path if outside it); line numbers are from the new file, with `Side: old` when only deleted lines are selected
-> Diff: staged                  ← absent for comments on files; staged | unstaged | commit <first 8 chars>; a session review's (#151): uncommitted | branch since <base> | since <base> | turn <base>..<target> (the pinned base and target hashes); code lines carry `+`, `-`, space, and the fence uses `diff`
+> Diff: staged                  ← absent for comments on files; staged | unstaged | commit <first 8 chars>; a session review's (#151): uncommitted | branch since <base> | since <base> | turn <base>..<target> | turn <base>..live | turn ..<target> (the pinned base and target hashes; the last form is an unborn repository's first turn); code lines carry `+`, `-`, space, and the fence uses `diff`
 > Truncated: the first 60 of 80 lines
 > ```ts
 > const a = 1;
