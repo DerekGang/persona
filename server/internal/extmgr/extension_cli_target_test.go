@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,6 +34,8 @@ func targetFakeHub(t *testing.T) (*httptest.Server, *atomic.Int32) {
 			_, _ = io.WriteString(w, `{"preview_id":"p1","permissions_digest":"d1","manifest":{"id":"example","name":"Example","version":"1.0.0"}}`)
 		case r.URL.Path == "/api/v1/extensions/-/install", r.URL.Path == "/api/v1/extensions/example/-/upgrade":
 			_, _ = io.WriteString(w, `{"id":"example","version":"1.0.0","status":"running"}`)
+		case r.URL.Path == "/api/v1/extensions/example/-/auth/step":
+			_, _ = io.WriteString(w, `{"done":true,"account":"example"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/-/") &&
 			strings.HasPrefix(r.URL.Path, "/api/v1/extensions/"):
 			_, _ = io.WriteString(w, `{"id":"example","config":{}}`)
@@ -73,6 +76,38 @@ func requireTarget(t *testing.T, out, home, hub string) {
 	}
 	if strings.Contains(out, extensionTargetToken) {
 		t.Fatalf("target output exposed the hub token:\n%s", out)
+	}
+}
+
+type targetWriteCase struct {
+	name, stdin string
+	args        []string
+	matching    bool // dev needs a real project, so its matching path is covered by the command's own tests
+}
+
+func targetWriteCases() []targetWriteCase {
+	return []targetWriteCase{
+		{name: "install", args: []string{"install", "dir:/tmp/example", "--yes"}, matching: true},
+		{name: "upgrade", args: []string{"upgrade", "example", "dir:/tmp/example", "--yes"}, matching: true},
+		{name: "rollback", args: []string{"rollback", "example"}, matching: true},
+		{name: "attach", args: []string{"attach", "example", "remote:rpc=/p.sock"}, matching: true},
+		{name: "detach", args: []string{"detach", "example"}, matching: true},
+		{name: "enable", args: []string{"enable", "example"}, matching: true},
+		{name: "disable", args: []string{"disable", "example"}, matching: true},
+		{name: "sandbox", args: []string{"sandbox", "example", "on"}, matching: true},
+		{name: "auth login", args: []string{"auth", "example", "login"}, matching: true},
+		{name: "auth logout", args: []string{"auth", "example", "logout"}, matching: true},
+		{name: "config", args: []string{"config", "example", "a=1"}, matching: true},
+		{name: "secret", stdin: "s3cret\n", args: []string{"secret", "example", "api_key"}, matching: true},
+		{name: "uninstall", args: []string{"uninstall", "example"}, matching: true},
+		{name: "auto-upgrade", args: []string{"auto-upgrade", "on"}, matching: true},
+		{name: "contribution", args: []string{"contribution", "example", "connector/notes", "on"}, matching: true},
+		{name: "market add", args: []string{"market", "add", "github:example/plugins"}, matching: true},
+		{name: "market set-spec", args: []string{"market", "set-spec", "example", "github:example/moved"}, matching: true},
+		{name: "market remove", args: []string{"market", "remove", "example"}, matching: true},
+		{name: "market refresh", args: []string{"market", "refresh", "example"}, matching: true},
+		{name: "market token", args: []string{"market", "token", "example", "--clear"}, matching: true},
+		{name: "dev", args: []string{"dev", "/tmp/example"}},
 	}
 }
 
@@ -157,7 +192,7 @@ func TestExtensionTargetMatchingFlags(t *testing.T) {
 	}
 }
 
-func TestExtensionTargetMismatchStopsBeforeHub(t *testing.T) {
+func TestExtensionTargetMismatchStopsEveryWrite(t *testing.T) {
 	t.Setenv("PERSONA_LANG", "en")
 	t.Setenv("PERSONA_LISTEN", "")
 	srv, requests := targetFakeHub(t)
@@ -169,39 +204,46 @@ func TestExtensionTargetMismatchStopsBeforeHub(t *testing.T) {
 	writeTargetHub(t, otherState, strings.TrimPrefix(srv.URL, "http://"))
 	t.Setenv("PERSONA_HOME", home)
 
-	for _, tc := range []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"home", []string{"install", "dir:/tmp/example", "--yes", "--expect-home", otherState}, otherState},
-		{"hub", []string{"install", "dir:/tmp/example", "--yes", "--expect-hub", "127.0.0.1:1"}, "127.0.0.1:1"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requests.Store(0)
-			before, err := os.ReadDir(home)
-			if err != nil {
-				t.Fatal(err)
-			}
-			out, err := runTargetCommand(t, "", tc.args...)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %v, want %s", err, tc.want)
-			}
-			if !strings.Contains(out, "PERSONA_HOME: "+home) || !strings.Contains(out, "Hub: "+srv.URL) {
-				t.Fatalf("target line missing:\n%s", out)
-			}
-			if got := requests.Load(); got != 0 {
-				t.Fatalf("requested the hub %d times after target mismatch", got)
-			}
-			after, err := os.ReadDir(home)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(after) != len(before) {
-				t.Fatalf("target mismatch changed %s", home)
-			}
-		})
+	for _, tc := range targetWriteCases() {
+		for _, mismatch := range []struct {
+			name, flag, value string
+		}{
+			{"home", "--expect-home", otherState},
+			{"hub", "--expect-hub", "127.0.0.1:1"},
+		} {
+			t.Run(tc.name+"/"+mismatch.name, func(t *testing.T) {
+				requests.Store(0)
+				before := targetDirNames(t, home)
+				args := append(append([]string{}, tc.args...), mismatch.flag, mismatch.value)
+				out, err := runTargetCommand(t, tc.stdin, args...)
+				if err == nil || !strings.Contains(err.Error(), mismatch.value) {
+					t.Fatalf("error = %v, want %s", err, mismatch.value)
+				}
+				if !strings.Contains(out, "PERSONA_HOME: "+home) || !strings.Contains(out, "Hub: "+srv.URL) {
+					t.Fatalf("target line missing:\n%s", out)
+				}
+				if got := requests.Load(); got != 0 {
+					t.Fatalf("requested the hub %d times after target mismatch", got)
+				}
+				if after := targetDirNames(t, home); !slices.Equal(after, before) {
+					t.Fatalf("target mismatch changed %s: %v -> %v", home, before, after)
+				}
+			})
+		}
 	}
+}
+
+func targetDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 func TestExtensionTargetFlagsOnWrites(t *testing.T) {
@@ -214,26 +256,12 @@ func TestExtensionTargetFlagsOnWrites(t *testing.T) {
 	hub := strings.TrimPrefix(srv.URL, "http://")
 	flags := []string{"--expect-home=" + home, "--expect-hub", hub}
 
-	for _, tc := range []struct {
-		name  string
-		stdin string
-		args  []string
-	}{
-		{"install", "", []string{"install", "dir:/tmp/example", "--yes"}},
-		{"upgrade", "", []string{"upgrade", "example", "dir:/tmp/example", "--yes"}},
-		{"enable", "", []string{"enable", "example"}},
-		{"disable", "", []string{"disable", "example"}},
-		{"config", "", []string{"config", "example", "a=1"}},
-		{"secret", "s3cret\n", []string{"secret", "example", "api_key"}},
-		{"uninstall", "", []string{"uninstall", "example"}},
-		{"market add", "", []string{"market", "add", "github:example/plugins"}},
-		{"market set-spec", "", []string{"market", "set-spec", "example", "github:example/moved"}},
-		{"market remove", "", []string{"market", "remove", "example"}},
-		{"market refresh", "", []string{"market", "refresh", "example"}},
-		{"market token", "", []string{"market", "token", "example", "--clear"}},
-	} {
+	for _, tc := range targetWriteCases() {
+		if !tc.matching {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := runTargetCommand(t, tc.stdin, append(tc.args, flags...)...)
+			out, err := runTargetCommand(t, tc.stdin, append(append([]string{}, tc.args...), flags...)...)
 			if err != nil {
 				t.Fatal(err)
 			}

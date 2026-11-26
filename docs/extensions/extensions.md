@@ -1656,7 +1656,8 @@ An option the command does not take, a missing argument or an extra one is refus
 `new`, `test` and `pack` below do not need the hub; everything else needs the hub running.
 What the commands print reads in the terminal's language (`PERSONA_LANG`, else `LC_ALL` / `LC_MESSAGES` / `LANG`; English when none is set or it is `C`), and they ask the hub for its text (errors, permission lines, statuses) in the same language, not in the user language an app last set ([i18n.md](../protocol/i18n.md), "Command line"). `show` stays JSON. The quotes below are the English text.
 
-Commands that can change an extension (`install`, `upgrade`, `enable`, `disable`, `config`, `secret`, `market` writes and
+Commands that can change an extension (`install`, `upgrade`, `rollback`, `attach` / `detach`, `enable` / `disable`,
+`sandbox`, `auth login` / `logout`, `config`, `secret`, `auto-upgrade`, `contribution`, `market` writes, `dev` and
 `uninstall`) print the resolved state directory and loopback hub before their preview or first request:
 
 ```text

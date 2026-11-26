@@ -70,10 +70,11 @@ const extensionUsage = `usage: personad extension <command> (also: personad ext,
   upgrades                          newer versions: going in, waiting for your confirmation, skipped
   audit [<id>] [--limit=N]          who installed, switched, signed in, deleted what, and when, newest first
                                     (an extension, a connector, feishu for the Feishu bot; all of them without an id)
-  Writes that can change an extension (install, upgrade, enable, disable, config,
-  secret, market, uninstall) print the resolved home and hub first. They also take
-  --expect-home <absolute path> and --expect-hub <host:port>; a mismatch stops
-  before any preview, request or write.`
+  Writes that can change an extension (install, upgrade, rollback, attach/detach,
+  enable/disable, sandbox, auth login/logout, config, secret, auto-upgrade,
+  contribution, market writes, dev, uninstall) print the resolved home and hub
+  first. They also take --expect-home <absolute path> and --expect-hub <host:port>;
+  a mismatch stops before any preview, request or write.`
 
 // ExtensionCommand runs `personad extension <args>`.
 func ExtensionCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -102,7 +103,7 @@ func ExtensionCommand(ctx context.Context, args []string, stdin io.Reader, stdou
 		return inv.hasOption(name)
 	}
 	positional := inv.positional // as many as extensionCommandArgs allows
-	if extensionTargetCommand(args[0], positional) {
+	if inv.writes {
 		if err := checkExtensionTarget(l, stdout, c, inv); err != nil {
 			return err
 		}
@@ -478,6 +479,7 @@ type extensionInvocation struct {
 	positional []string
 	options    []string
 	values     map[string]string
+	writes     bool
 }
 
 func (i extensionInvocation) hasOption(name string) bool {
@@ -494,8 +496,17 @@ type extensionArgs struct {
 	min, max     int      // positional arguments (a market command's include its own word); max -1: any number
 	options      []string // exact words; one ending in "=" takes a value after it (--token-from=<id>)
 	valueOptions []string // options that take a value as the next word or after "="
-	exclusive    bool     // at most one of the options
-	usage        string   // printed with a mistake; extensionUsage when empty
+	writes       bool     // the command can change hub state
+	writesWhen   func([]string) bool
+	exclusive    bool   // at most one of the options
+	usage        string // printed with a mistake; extensionUsage when empty
+}
+
+var extensionTargetOptions = []string{"--expect-home", "--expect-hub"}
+
+// extensionWrite is a command that changes hub state: it gets the target options and reports the target before dispatch.
+func extensionWrite(min, max int, options ...string) extensionArgs {
+	return extensionArgs{min: min, max: max, options: options, valueOptions: extensionTargetOptions, writes: true}
 }
 
 // extensionCommandArgs are the hub commands and their arguments; `audit` parses its own, and new / test / pack need
@@ -504,32 +515,30 @@ var extensionCommandArgs = map[string]extensionArgs{
 	"list":            {},
 	"upgrades":        {},
 	"show":            {min: 1, max: 1},
-	"rollback":        {min: 1, max: 1},
-	"attach":          {min: 2, max: 2},
-	"detach":          {min: 1, max: 1},
-	"install":         {min: 1, max: 1, options: []string{"--yes"}, valueOptions: extensionTargetOptions},
-	"upgrade":         {min: 2, max: 2, options: []string{"--yes"}, valueOptions: extensionTargetOptions},
-	"enable":          {min: 1, max: 1, options: []string{"--cascade"}, valueOptions: extensionTargetOptions},
-	"disable":         {min: 1, max: 1, options: []string{"--cascade"}, valueOptions: extensionTargetOptions},
-	"sandbox":         {min: 2, max: 2},
-	"auth":            {min: 1, max: 2},
-	"config":          {min: 2, max: -1, valueOptions: extensionTargetOptions},
-	"secret":          {min: 2, max: 2, options: []string{"--delete"}, valueOptions: extensionTargetOptions},
-	"uninstall":       {min: 1, max: 1, options: []string{"--keep-data", "--cascade", "--members"}, valueOptions: extensionTargetOptions},
+	"rollback":        extensionWrite(1, 1),
+	"attach":          extensionWrite(2, 2),
+	"detach":          extensionWrite(1, 1),
+	"install":         extensionWrite(1, 1, "--yes"),
+	"upgrade":         extensionWrite(2, 2, "--yes"),
+	"enable":          extensionWrite(1, 1, "--cascade"),
+	"disable":         extensionWrite(1, 1, "--cascade"),
+	"sandbox":         extensionWrite(2, 2),
+	"auth":            {min: 1, max: 2, valueOptions: extensionTargetOptions, writesWhen: extensionAuthWrites},
+	"config":          extensionWrite(2, -1),
+	"secret":          extensionWrite(2, 2, "--delete"),
+	"uninstall":       extensionWrite(1, 1, "--keep-data", "--cascade", "--members"),
 	"search":          {max: -1},
-	"auto-upgrade":    {min: 1, max: 2},
-	"dev":             {max: 1},
+	"auto-upgrade":    extensionWrite(1, 2),
+	"dev":             extensionWrite(0, 1),
 	"contributions":   {min: 1, max: 1, usage: extensionModelUsage},
-	"contribution":    {min: 3, max: 3, usage: extensionModelUsage},
+	"contribution":    {min: 3, max: 3, valueOptions: extensionTargetOptions, writes: true, usage: extensionModelUsage},
 	"market list":     {min: 1, max: 1},
-	"market add":      {min: 2, max: 2, options: []string{"--token", "--token-from="}, valueOptions: extensionTargetOptions, exclusive: true},
-	"market set-spec": {min: 3, max: 3, valueOptions: extensionTargetOptions},
-	"market remove":   {min: 2, max: 2, valueOptions: extensionTargetOptions},
-	"market refresh":  {min: 2, max: 2, valueOptions: extensionTargetOptions},
-	"market token":    {min: 2, max: 2, options: []string{"--clear"}, valueOptions: extensionTargetOptions},
+	"market add":      {min: 2, max: 2, options: []string{"--token", "--token-from="}, valueOptions: extensionTargetOptions, writes: true, exclusive: true},
+	"market set-spec": extensionWrite(3, 3),
+	"market remove":   extensionWrite(2, 2),
+	"market refresh":  extensionWrite(2, 2),
+	"market token":    {min: 2, max: 2, options: []string{"--clear"}, valueOptions: extensionTargetOptions, writes: true},
 }
-
-var extensionTargetOptions = []string{"--expect-home", "--expect-hub"}
 
 // isExtensionOption is a word that is not a positional argument.
 func isExtensionOption(a string) bool { return len(a) > 1 && strings.HasPrefix(a, "-") }
@@ -599,6 +608,10 @@ func checkExtensionArgs(args []string) (extensionInvocation, error) {
 		}
 		inv.options = append(inv.options, a)
 	}
+	inv.writes = spec.writes
+	if spec.writesWhen != nil {
+		inv.writes = spec.writesWhen(inv.positional)
+	}
 	if len(inv.positional) < spec.min {
 		return inv, errors.New(usage)
 	}
@@ -624,15 +637,8 @@ func extensionMarketSubcommand(args []string) (string, error) {
 	return "", errors.New(clitext.Named(extensionUsage))
 }
 
-// extensionTargetCommand says which commands write through the hub and therefore report and check their target first.
-func extensionTargetCommand(command string, positional []string) bool {
-	switch command {
-	case "install", "upgrade", "enable", "disable", "config", "secret", "uninstall":
-		return true
-	case "market":
-		return len(positional) > 0 && slices.Contains([]string{"add", "set-spec", "token", "remove", "refresh"}, positional[0])
-	}
-	return false
+func extensionAuthWrites(positional []string) bool {
+	return len(positional) > 1 && (positional[1] == "login" || positional[1] == "logout")
 }
 
 // checkExtensionTarget prints the home and loopback hub a write will use, then checks explicit expectations. Nothing
