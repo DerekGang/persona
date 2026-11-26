@@ -73,7 +73,8 @@ func TestListenTCPIPv4WildcardIsIPv4Only(t *testing.T) {
 
 	cfg := &Config{Public: PublicConfig{TLSListen: net.JoinHostPort("0.0.0.0", port)}}
 	endpoints := collectEndpoints(cfg, addr.Port, []localAddress{testLocalAddress("lan4"), testLocalAddress("ipv6")}, time.Now())
-	if len(endpoints) != 1 || endpoints[0].Kind != "lan" || endpoints[0].URL != "https://10.0.0.1:"+port {
+	wantURL := "https://" + net.JoinHostPort(testLocalAddress("lan4").Addr.String(), port)
+	if len(endpoints) != 1 || endpoints[0].Kind != "lan" || endpoints[0].URL != wantURL {
 		t.Fatalf("IPv4-only listener published %+v, want only the LAN IPv4 endpoint", endpoints)
 	}
 }
