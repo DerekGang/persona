@@ -63,6 +63,11 @@
 - Bind anything that waits to act on "the agent" to the process it was decided for: pid plus start mark (`hookTurns.process`, else `sessions/<pid>.json` via `liveClaudes`), checked with `processAlive` at every look and again right before acting. Drop it once that process is gone or the hooks report another one; refuse it where the process cannot be told.
 - Keep the wait short. "Once this turn ends" is not "whenever this conversation next runs".
 
+## Create an agy ACP session before its role-scoped MCP (#15327)
+
+- The Companion's first `session/resume` both attaches `personad mcp` and triggers native agy's initial catalog read. A task role linked only after `session.start` returns is therefore too late for that catalog; `notifications/tools/list_changed` is not evidence that agy lists again. Create with no MCP, return the real `agy-<uuid>` as `starting: true`, link the role and supervision relationship, then let the ordinary first `session.send` resume with MCP and prompt.
+- Rolling upgrades need no new activation RPC: an older Companion ignores `defer_mcp` and finishes normally, so only an answer actually marked `starting: true` gets the post-link send. Keep the same `client_msg_id` across the start and activation. Close a definite unused start, but never close or retry an uncertain activation whose prompt may already be running.
+
 ## Project MCP enums only in agy's tool declarations (#9944)
 
 agy can turn a valid boolean enum such as `task_review`'s `evidence.ready: enum [true]` into an empty Gemini string
@@ -129,6 +134,21 @@ App for a turn, look whether one runs (rollout tail, or the history database for
 message on the node until it ends; count a turn the node just started as running until the App writes it down, or two
 sends in a row steer the second into the first's turn. On Codex's own app-server, steer with `turn/steer` and the
 observed turn id instead; never send both a steer and a start for one message.
+
+## Task workspace sources and ownership (#16161)
+
+For a local linked checkout, keep the source Git directory's identity separate from the
+owned task path. Otherwise a generic delete guard can claim the user's source repository.
+Save the chosen commit and operation before dispatching a side effect. A missing capability
+can select the older checkout path. An uncertain prepare or start must retain the same operation.
+Use the same path check at preview and prepare so existing symlinks cannot pass one check
+and fail the other.
+
+On hosts with a symlinked home, Git records physical worktree paths (#16305).
+Resolve the configured home prefix before deriving the task and repository paths, and
+resolve the configured state prefix before appending control directories. Checking the
+remaining components as written preserves the distinction between host aliases and
+links inside the workspace.
 
 ## Task branch reuse is not forced worktree creation (#8357)
 
@@ -361,6 +381,8 @@ may legitimately repeat an earlier answer, so retirement follows the landed stre
   Drop the reported id only when the index knows that thread under a different name, and never under a name it gave the thread before (a rename leaves the earlier line in the index, and the node keeps only the latest); a remembered pane binding is still dropped.
   Check the name of the thread herdr reported, not of the main chat a sub-Agent id was replaced with: that name says nothing about the reported thread.
   Claude panes likewise: pane bindings for Persona-started sessions live in hub's database and reload after node restart, but can be stale; `sessions/<pid>.json` takes priority.
+  Pane ids are reused too: herdr numbers its workspaces again after its server restarts, so a new tab can get the id (`wD:p1`) of a tab that closed days
+  ago, and the binding of the session that ran there comes back on every hub connection. A tab Persona opens forgets every binding of its id first (#14682).
   After changing pane identification logic, rerun verification after deployment (restart); pre- and post-restart results may differ.
 - herdr `agent.prompt` pastes, then waits about 300 ms before Enter: serialize sends to the same session, or the second screen read mistakes the first message for an input draft. Sending deduplication lives in hub Postgres (`sent_messages`):
   node's in-memory deduplication disappears on reconnect / hub restart, exactly when the App auto-retries. Full session-reading and sending verification, with per-hop timings: `docs/archive/integrations/session-verify.md`.
@@ -1687,7 +1709,9 @@ terminal never saw it, and the companion's turn overwrote the stored steps from 
 probe it by taking even a shared `flock` (`LOCK_SH|LOCK_NB`), because a starting `agy` tries `LOCK_EX|LOCK_NB` once and
 runs its whole session without a lock if that fails (#14561). On Linux, read `/proc/locks` for the file's device and
 inode; where no lock table can be read, fall back to the presence file plus recent transcript writes by another process.
-Calls that drive the conversation go to the pane, or are refused (`agy_in_terminal`) while held.
+Calls that drive the conversation go to the pane, or are refused (`agy_in_terminal`) while held. So every engine that can
+run agy must list it as a pane and learn the pane's conversation: Orca did neither, and every message to an agy open in
+an Orca terminal was refused (#16531).
 
 ## First tool discovery can precede the session list (#14855)
 

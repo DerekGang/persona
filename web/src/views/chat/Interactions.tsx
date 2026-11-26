@@ -1,13 +1,12 @@
 // What the agent is waiting on (questions, plans, permissions, terminal dialogs, MCP forms and links), as Beautiful UI's Approval Card.
 import { Component, createContext, Fragment, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ErrorInfo, type ReactNode, type RefObject } from "react";
-import { answerCard, usePendingLine } from "../../lib/card-answer";
+import { answerCard, usePendingLine, type AnswerFrom } from "../../lib/card-answer";
 import { cardKeyAction, focusComposer } from "../../lib/card-keys";
 import { lazyPage } from "../../lib/lazy-page";
 import { mergeRefs } from "../../lib/tap-guard";
 import { delegateLines, isDelegating, recommendedLabels, type DelegatedAnswer } from "../../lib/delegate";
 import { supervisorHeld } from "../../lib/supervisor-held";
 import { Choice, DigitHint } from "./Choice";
-import { DelegatedCard } from "./Delegated";
 import { BUSY_MOTION, spinStyle } from "../../lib/busy-motion";
 import { appArchiveDeps, archiveAgent, archiveSession } from "../../lib/agent-archives";
 import { isSessionReview } from "../../lib/types";
@@ -44,8 +43,8 @@ import { isChunkError } from "../PageBoundary";
 import { useChatCardTapGuard, useChatTapGuardView } from "./card-tap-guard";
 
 /** Answers a card: the chat's cards and the overview's quick answers (Home, #4090) send through this. */
-export async function resolve(ix: Interaction, body: Record<string, unknown>) {
-  const r = await answerCard(ix, body);
+export async function resolve(ix: Interaction, body: Record<string, unknown>, from: AnswerFrom = {}) {
+  const r = await answerCard(ix, body, from);
   if (!r.ok) toast(r.error, "error");
   else if (r.already) toast(t("chat-interactions.already_answered"), "info");
   return r.ok;
@@ -410,7 +409,7 @@ export function QuestionCard({ ix, canApprove, onAnswer }: { ix: Interaction; ca
       looking={looking}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={onAnswer ? undefined : () => resolve(ix, { dismiss: true })}
+      onDismiss={onAnswer || ix.no_hand_back ? undefined : () => resolve(ix, { dismiss: true })}
       busy={busy}
       footer={
         <>
@@ -527,7 +526,7 @@ function PlanCard({ ix }: { ix: Interaction }) {
       title={t("chat-interactions.plan_title")}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={() => go({ dismiss: true })}
+      onDismiss={ix.no_hand_back ? undefined : () => go({ dismiss: true })}
       busy={busy}
       footer={
         rejecting ? (
@@ -578,6 +577,9 @@ function PlanCard({ ix }: { ix: Interaction }) {
 // The complete tool-approval card loads with the first permission interaction, keeping its optional clarification UI
 // and permission editor out of the first screen. Its slot stays identifiable while the chunk loads or cannot load.
 const PermissionCard = lazyPage(() => import("./PermissionCard").then((m) => m.PermissionCard));
+// A card the assistant answered for the user (its "Change answer"): drawn only after such an answer, so its chunk is off
+// the first screen and loads with the first one (the idle tier has no room for it).
+const DelegatedCard = lazyPage(() => import("./Delegated").then((m) => m.DelegatedCard));
 
 export function PermissionCardLoading({ ix }: { ix: Interaction }) {
   return (
@@ -589,8 +591,7 @@ export function PermissionCardLoading({ ix }: { ix: Interaction }) {
 
 /** A repeated cached import failure gets one full reload per card and tab session. The marker survives that reload;
  *  if the chunk is still unavailable, the card keeps its local Retry instead of entering a reload loop. */
-function reloadPermissionChunk(id: string) {
-  const key = `permission-chunk-reload:${id}`;
+function reloadCardChunk(key: string) {
   try {
     if (sessionStorage.getItem(key)) return;
     sessionStorage.setItem(key, "1");
@@ -613,7 +614,7 @@ export class PermissionCardFrame extends Component<{ ix: Interaction; children?:
   componentDidCatch(error: unknown, info: ErrorInfo) {
     const chunk = isChunkError(error);
     reportBoundary(error, "permission_card", chunk, info.componentStack);
-    if (chunk && this.failures++) reloadPermissionChunk(this.props.ix.id);
+    if (chunk && this.failures++) reloadCardChunk(`permission-chunk-reload:${this.props.ix.id}`);
   }
 
   render() {
@@ -628,6 +629,34 @@ export class PermissionCardFrame extends Component<{ ix: Interaction; children?:
       );
     }
     return <Suspense fallback={<PermissionCardLoading ix={ix} />}>{children ?? <PermissionCard ix={ix} />}</Suspense>;
+  }
+}
+
+/** The same for a card the assistant answered for the user: its chunk loads with the first such answer, and a failed
+ *  load keeps a Retry in its slot instead of taking the chat (and the cards beside it) down to the page boundary. */
+export class DelegatedCardFrame extends Component<{ d: DelegatedAnswer; children?: ReactNode }, { error: unknown }> {
+  state = { error: null as unknown };
+  failures = 0;
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    const chunk = isChunkError(error);
+    reportBoundary(error, "delegated_card", chunk, info.componentStack);
+    if (chunk && this.failures++) reloadCardChunk(`delegated-chunk-reload:${this.props.d.ix.id}`);
+  }
+
+  render() {
+    const { d, children } = this.props;
+    if (this.state.error) {
+      return (
+        <ErrorNotice role="alert" message={t("chat-fulltext.failed")}
+          actions={<Button size="sm" onClick={() => this.setState({ error: null })}>{t("app.retry")}</Button>} />
+      );
+    }
+    return <Suspense fallback={null}>{children ?? <DelegatedCard d={d} />}</Suspense>;
   }
 }
 
@@ -685,7 +714,7 @@ function SecretRunCard({ ix }: { ix: Interaction }) {
       if (el) el.value = "";
     };
   }, []);
-  const { machine, purpose, commands } = secretRunInput(ix.tool_input);
+  const { machine, purpose, delivery, commands } = secretRunInput(ix.tool_input);
   // without commands in tool_input the hub's summary (the computer, the purpose and every command) stands in for them;
   // with neither, nothing says what would run and Run stays off
   const summary = commands.length ? "" : (ix.summary?.trim() ?? "");
@@ -695,7 +724,7 @@ function SecretRunCard({ ix }: { ix: Interaction }) {
   const send = async (body: Record<string, unknown>, key: "run" | "decline") => {
     setPassword("");
     setBusy(key);
-    await resolve(ix, body);
+    await resolve(ix, body, { handoffCard: true });
     setBusy(null);
   };
   return (
@@ -727,6 +756,12 @@ function SecretRunCard({ ix }: { ix: Interaction }) {
           </div>
         ) : (
           summary && <pre data-secret-run-summary className={CODE_BOX}>{summary}</pre>
+        )}
+        {delivery === "env" && (
+          <p role="alert" className="flex items-start gap-1.5 text-xs leading-snug font-medium text-orange">
+            <Icon name="warning" size={13} className="mt-px shrink-0" />
+            {t("chat-interactions.secret_run_env_warning")}
+          </p>
         )}
         <div className="flex flex-col gap-1">
           {/* The user's computer password, not this site's: "one-time-code" keeps Chrome from offering to save it (its
@@ -933,7 +968,7 @@ function PlainScreenCard({ ix }: { ix: Interaction }) {
       title={d?.question || t("chat-interactions.screen_title")}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={() => go({ dismiss: true }, "dismiss")}
+      onDismiss={ix.no_hand_back ? undefined : () => go({ dismiss: true }, "dismiss")}
       busy={busy !== null}
       footer={<div className="flex w-full min-w-0 flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -1053,7 +1088,7 @@ function MultiScreenCard({ ix }: { ix: Interaction }) {
       title={d.question || t("chat-interactions.multi_title")}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={() => go({ dismiss: true }, "dismiss")}
+      onDismiss={ix.no_hand_back ? undefined : () => go({ dismiss: true }, "dismiss")}
       busy={busy !== null}
       footer={
         <>
@@ -1159,7 +1194,7 @@ function ElicitationCard({ ix }: { ix: Interaction }) {
       title={url ? t("chat-interactions.url_title") : t("chat-interactions.form_title")}
       cardKeys={keys}
       tapGuard={tapGuard}
-      onDismiss={() => go({ dismiss: true }, "dismiss")}
+      onDismiss={ix.no_hand_back ? undefined : () => go({ dismiss: true }, "dismiss")}
       busy={busy !== null}
       footer={
         <>
@@ -1550,7 +1585,7 @@ export function PendingCards({ interactions, answered, delegated = [], offerNext
   if (!count && !answered.length && !delegated.length) return null;
   const shown = showsAnswered({ narrow, keyboard, open, short });
   const done = shown
-    ? [...delegated.map((d) => <DelegatedCard key={d.ix.id} d={d} />), ...(answered.length ? [<AnsweredSummary key="answered" answered={answered} />] : [])]
+    ? [...delegated.map((d) => <DelegatedCardFrame key={d.ix.id} d={d} />), ...(answered.length ? [<AnsweredSummary key="answered" answered={answered} />] : [])]
     : [];
   // the cut-off count only while all the cards are opened: a stack folded to its first says where it stands instead (the
   // position chip). Each card has its own keyed provider, so a card moving up to first as the one above it goes keeps

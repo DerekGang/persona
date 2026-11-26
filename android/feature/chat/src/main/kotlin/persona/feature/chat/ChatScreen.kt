@@ -65,6 +65,7 @@ import persona.core.domain.sort.TerminalResume
 import persona.core.domain.sort.terminalResume
 import persona.core.domain.sort.canTerminal
 import persona.core.domain.sort.canTypeClaudeCommands
+import persona.core.domain.sort.displayTitle
 import persona.core.domain.sort.shownCloseout
 import persona.feature.chat.media.ChatImageViewer
 import persona.core.domain.rewind.Rewind
@@ -602,10 +603,20 @@ private fun ChatPage(
     }
     fun toggle(id: String) {
         val (next, opened) = toggleWork(WorkOpenState(openWork.toSet()), id)
+        val rowId = lines.firstOrNull { it.id == id }?.contentKey ?: id
+        val anchored = when {
+            opened -> chatList.beginToggle(rowId, riseToTop = chatList.followsEnd)
+            // Closing while the newest end is followed leaves the list there; elsewhere keep the header under the tap.
+            !chatList.followsEnd -> chatList.beginToggle(rowId, riseToTop = false)
+            else -> false
+        }
+        if (!anchored) chatList.endExpansion()
         chatList.setExpanded(next.open)
         if (opened) (projection.lines.firstOrNull { it.id == id } as? ChatLine.Work)?.steps
             ?.filterIsInstance<persona.core.domain.lines.WorkItem.Folded>()?.forEach { expand(it.item.item) }
+        if (opened) chatList.noteExpansionLoading(folding.isNotEmpty())
     }
+    LaunchedEffect(folding) { chatList.noteExpansionLoading(folding.isNotEmpty()) }
     // Restored open lines and folds arriving while expanded load just as a manual tap does.
     LaunchedEffect(projection) {
         openFoldsToFetch(projection.lines, folding, foldErrors.keys).forEach(::expand)
@@ -1052,8 +1063,9 @@ private fun ChatPage(
                     if (activityInHeader && openBackgroundList != null && backgroundOwner != null && ChatActivity.shown(backgroundOwner))
                         ({ ChatActivityPill(backgroundOwner, openBackgroundList) }) else null
                 val tabs = session != null && onOpenSibling != null && siblingSessions.size > 1
+                val preferHerdrTabName = renderStyle != ChatRenderStyle.Assistant && chrome.preferHerdrTabName
                 JPage(
-                    title = session?.displayTitle ?: stringResource(R.string.chat_screen_untitled),
+                    title = session?.displayTitle(preferHerdrTabName) ?: stringResource(R.string.chat_screen_untitled),
                     scrollEdgeStyle = ScrollEdgeStyle.Gradient,
                     topScrollEdgeStyle = if (tabs || activityPill != null) TabbedChatScrollEdgeStyle else ScrollEdgeStyle.Gradient,
                     topBar = {
@@ -1075,6 +1087,7 @@ private fun ChatPage(
                                         forking = forking,
                                         takeover = pageTakeover,
                                         menuOpen = headerMenuOpen,
+                                        preferHerdrTabName = preferHerdrTabName,
                                         machines = machines,
                                         childRows = childCards.list,
                                         onOpenSubagent = chrome.onOpenSubagent ?: chrome.onOpenSession,
@@ -1099,6 +1112,7 @@ private fun ChatPage(
                                 full = header, compact = {
                                     ChatSlimHeader(session, status, connection, onBack,
                                         onMore = if (compactGlassAgent) ({ headerMenuOpen.value = true }) else null,
+                                        preferHerdrTabName = preferHerdrTabName,
                                         onOpen = headerFold::open)
                                 })
                             else header()
@@ -1382,7 +1396,7 @@ private fun ChatPage(
                 terminal, snapshot.turnDurationSeconds, notice ?: snapshot.error, recovery, machine,
                 statusBindings.draftSaveError, fullTextState, sheetPlanState, planSheetState, renderStyle, composer,
                 messageMenu, quoteTarget,
-                onContext = { text -> linkContexts = linkContexts + messageContext(session?.displayTitle ?: res.getString(R.string.chat_screen_untitled), text, context.resources)
+                onContext = { text -> linkContexts = linkContexts + messageContext(session?.displayTitle(renderStyle != ChatRenderStyle.Assistant && chrome.preferHerdrTabName) ?: res.getString(R.string.chat_screen_untitled), text, context.resources)
                     notice = res.getString(R.string.chat_screen_added_context) },
                 onNotice = { notice = it }, onFork = onFork, rewindMenu = rewindMenu,
                 onDelete = { target -> messages.firstOrNull { it.clientMessageId == target.id }?.let { message ->

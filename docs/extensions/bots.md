@@ -120,6 +120,218 @@ The two complement each other and have separate switches.
   The owner and consumed code must be saved before pairing is acknowledged or messages are authorized. If saving fails, the bot asks you to send the same code again before it expires; the previous code, expiry and attempt count stay unchanged. A later failure to save the optional contact name keeps the committed binding and its previous display name.
 - Names: reading contacts needs `contact:user.base:readonly`; without that permission the owner is called by `assistant.owner` in the manager's `manager.json`, and others "someone".
 
+## Reading as you: daily sync
+
+The bot reads and writes as itself (a tenant token). Separately, the owner can let a bot's app read **as them** once, and
+from then on a daily sync copies what changed in their Lark into the knowledge base: chats and their history (threads and
+attachments included), Drive, Docs, Sheets, Base, Wiki and Minutes. It is the built-in Lark channel's own feature
+(`server/internal/modules/lark/larkauth` and `server/internal/modules/lark/larksync`, with the manager's side in
+`server/internal/extmgr/larksync.go` and its neighbours); it needs no extension and no lark-cli.
+
+### Two steps on one page
+
+1. **Create or extend the app.** The device-code registration of "Pairing and permissions" now also asks for user scopes
+   (the page's `addons.scopes.user`), from one of two packs:
+   - **Documents and minutes** (`docs_standard`): Drive, Docs, Sheets, Base, Wiki, Minutes and message search, plus
+     `offline_access`, which is what gives a refresh token.
+   - **Everything, chat history included** (`full_with_im`): adds the chats and their history as the owner
+     (`im:message.group_msg:get_as_user`, `im:message.p2p_msg:get_as_user`) and file downloads.
+
+   An existing app (the chat bot's, or one added earlier) gets the scopes added by a registration that names its App ID
+   (`POST /api/v1/bots/feishu/sync/bots/{bot}/scopes`); a new sync-only app is one QR code
+   (`POST /api/v1/bots/feishu/sync/bots`, then `POST /api/v1/bots/feishu/sync/bots/{bot}/register` until done).
+2. **Authorize.** Right after, the page starts the user authorization (`POST /api/v1/bots/feishu/sync/bots/{bot}/authorize`):
+   OAuth v3 with PKCE and `offline_access`. The redirect URL is the web app's `/lark-oauth` page; the manager first adds it to
+   the app through `PATCH /open-apis/application/v7/applications/{app_id}/config` (`security.add.redirect_urls`, effective at
+   once without review) together with the user scopes, and publishes a version. The page then opens Lark's authorization
+   page; Lark returns to `/lark-oauth`, which hands `state` and `code` to `POST /api/v1/bots/feishu/sync/oauth`.
+
+   Changing the app's configuration needs `application:application:patch`, which the platform does not grant by default.
+   Without it there are two fallbacks, in order:
+   - **Device flow**: the page shows a QR code that authorizes without any redirect URL (the endpoint lark-cli uses,
+     `oauth/v1/device_authorization`; it is not in the public API catalogue, so it may change).
+   - **Paste once**: if that fails too, the page shows the redirect URL with a copy button and a link straight to the app's
+     security settings; after pasting it there, **Continue** opens the authorization page.
+
+The iPhone and iPad app and the Android app have the same section on their Lark bot page (#15392), on the same routes.
+For the browser way they show Lark's authorization page in an in-app web view with the hub's own address plus
+`/lark-oauth` as the redirect URL, stop that view when it reaches the address (the web page never loads), and hand
+`state` and `code` to `POST /api/v1/bots/feishu/sync/oauth` themselves. The device flow and the paste-once way work as
+on the web. A hub without the sync (404, or `available: false`) hides the section.
+
+So a new owner confirms twice on one page (scan to create, then agree); an app that already has the scopes needs only
+the second. The tokens are sealed with `secret.key` (settings `bots.feishu.sync.bindings`, re-sealed by the key rotation),
+never shown and never logged.
+
+### Company tenants and approval
+
+The app the registration creates is a **custom app of the tenant** of whoever scans (Lark has no separate "personal app"
+type that skips the tenant's rules). In a company tenant:
+
+- **User scopes need the admin's approval**, unless the admin made them review-free. Reading chat history as a user
+  (`…:get_as_user`), Drive and Minutes are sensitive and usually reviewed. Until a version is approved the page shows that
+  the app is waiting for the admin's approval (`awaiting_approval`); authorizing meanwhile only grants what is already approved.
+- If the company does not let employees create apps, the scan is refused: ask IT to create the app (or allow it), enter its
+  credentials under **Already have a Lark app?**, then add the scopes and authorize.
+- Only people within the app's availability scope can authorize it (error `20010` otherwise).
+- When the admin will not approve chat history, choose **Documents and minutes**: documents, wiki and minutes still sync,
+  and company chats stay with what the Lark gateway already collects.
+- A personal account without a team can create a free one-person team in the Lark app first; its owner is its admin and
+  approves their own app.
+
+### Several accounts and several bots
+
+Bindings are (account × bot) pairs. The bot in `bots.feishu` stays the **primary** bot (`bot_id` `primary`): the only one
+that chats, configured exactly as before, so older settings need no migration and keep working unchanged. Every other bot
+is **sync-only** (`bots.feishu.sync.bots`) and holds no long connection. An account is whoever authorized
+(`<brand>:<tenant_key>:<open_id>`); a work account and a personal account, each with its own tenant's app, are two
+bindings. Each binding has its own token refresh (one at a time: the platform rotates the refresh token, so two
+concurrent refreshes would lose it), cursors, rate limits and failure backoff: one binding being refused, rate-limited or
+missing a scope marks only that binding, and the others and the chat bot carry on.
+
+### The daily run
+
+Each enabled binding runs once a day, at `schedule_hour` local time (default 3) plus a minute of its own, or at once with
+**Sync now** (`POST /api/v1/bots/feishu/sync/bindings/{key}/run`). The first run reads the last 30 days; later runs read what
+changed since the cursors, with a few minutes of overlap. A run has a 20-minute budget; what is left is read next time.
+For bindings that include chat history (`full_with_im`), a lightweight incremental chat sync also runs every 15 minutes
+(5-minute budget) after the first full run: it reads only new messages since each chat's cursor, discovers newly started
+single chats (`chat_type: "p2p_chat"`), and follows any newly linked cloud documents and meeting minutes without walking
+Drive or Wiki. It shares the binding's rate limiter and running lock with the daily full sync (never overlapping it) and
+can be turned off in Settings (`PUT /api/v1/bots/feishu/sync` with `im_poll: false`), leaving the daily full run unchanged.
+
+Synced messages are scanned for Feishu / Lark cloud document and wiki links (`/docx/`, `/docs/`, `/sheets/`, `/base/`,
+`/bitable/`, `/file/`, `/wiki/`, `/minutes/`), including documents shared with the owner outside their My Space root.
+Wiki links resolve via `GET /open-apis/wiki/v2/spaces/get_node`, metadata is batch-queried via
+`POST /open-apis/drive/v1/metas/batch_query`, `docx` / `sheet` / `bitable` convert to Markdown with the existing readers,
+readable text files (`.md`, `.txt`, `.csv`, `.json`, `.yaml`, etc.) download via
+`GET /open-apis/drive/v1/files/{file_token}/download` using the user token, and non-text files keep metadata only. Every
+linked document deduplicates by `obj_token` + revision and records `message_link` in `sources[]`; unfetched links when a
+run hits its budget or rate limit are persisted per binding in `lark_sync_cursors` (`links_queue`, deduplicated by
+`obj_token`) and drained on subsequent runs (including 15-minute `ModeIM` runs) with recent live links prioritized ahead
+of historical backfill links. Unreadable documents (403, missing scope, export disabled, oversized file) record the
+reason in `Note` at revision 0 without blocking the run, and 403 / `scope_missing` links remain queued for automatic
+retry once permissions recover. The scope packs and all three manual setup guides include the API permissions below.
+
+#### Sync API scope audit
+
+Checked against the official Feishu Open Platform API pages on 2026-11-25. Each row lists a sufficient read
+permission from that endpoint's alternatives, not every possible broader permission or unused response-field scope.
+The API access permission for contacts and its name-field permission are both needed. A document's own sharing,
+export restrictions and the tenant's contact visibility still apply after scopes are granted.
+
+| Reader (official API reference) | Sufficient requested user scope | Tier |
+| --- | --- | --- |
+| [Drive listing](https://open.feishu.cn/document/server-docs/docs/drive-v1/folder/list) | `drive:drive:readonly` | Both |
+| [Linked file metadata](https://open.feishu.cn/document/server-docs/docs/drive-v1/file/batch_query) | `drive:drive.metadata:readonly` | Both |
+| [Readable text download](https://open.feishu.cn/document/server-docs/docs/drive-v1/download/download) | `drive:drive:readonly` or `drive:file:download` | Both |
+| [Docx metadata](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/get) | `docx:document:readonly` | Both |
+| [Docx blocks](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/list) | `docx:document:readonly` | Both |
+| [Docx raw content fallback](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/raw_content) | `docx:document:readonly` | Both |
+| [Sheet list](https://open.feishu.cn/document/server-docs/docs/sheets-v3/spreadsheet-sheet/query) | `sheets:spreadsheet:readonly` or `drive:drive:readonly` | Both |
+| [Sheet values](https://open.feishu.cn/document/server-docs/docs/sheets-v3/data-operation/reading-a-single-range) | `sheets:spreadsheet:readonly` or `drive:drive:readonly` | Both |
+| [Base tables](https://open.feishu.cn/document/server-docs/docs/bitable-v1/app-table/list) | `bitable:app:readonly` | Both |
+| [Base records](https://open.feishu.cn/document/server-docs/docs/bitable-v1/app-table-record/list) | `bitable:app:readonly` | Both |
+| [Wiki spaces](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space/list) | `wiki:wiki:readonly` or `wiki:space:retrieve` | Both |
+| [Wiki children](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space-node/list) | `wiki:wiki:readonly` or `wiki:node:retrieve` | Both |
+| [Wiki link resolution](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space-node/get_node) | `wiki:wiki:readonly` | Both |
+| [Minutes metadata](https://open.feishu.cn/document/server-docs/minutes-v1/minute/get) | `minutes:minutes:readonly` | Both |
+| [Minutes transcript](https://open.feishu.cn/document/minutes-v1/minute-transcript/get) | `minutes:minutes.transcript:export` | Both |
+| [Message search and p2p discovery](https://open.feishu.cn/document/server-docs/search-v2/suite-search/create) | `search:message` | Full |
+| [Chat listing](https://open.feishu.cn/document/server-docs/group/chat/list) | `im:chat:read` or `im:chat:readonly` | Full |
+| [Chat name fallback](https://open.feishu.cn/document/server-docs/group/chat/get) | `im:chat:readonly` | Full |
+| [Chat history](https://open.feishu.cn/document/server-docs/im-v1/message/list) | `im:message:readonly` | Full |
+| [Search hit message](https://open.feishu.cn/document/server-docs/im-v1/message/get) | `im:message:readonly` | Full |
+| [Lazy message attachment](https://open.feishu.cn/document/server-docs/im-v1/message/get-2) | `im:message:readonly` | Full |
+| [Sender name API access](https://open.feishu.cn/document/server-docs/contact-v3/user/get) | `contact:contact.base:readonly` | Full |
+| [Sender name field](https://open.feishu.cn/document/server-docs/contact-v3/user/get) | `contact:user.base:readonly` | Full |
+
+Full also requests `im:message.group_msg:get_as_user` and `im:message.p2p_msg:get_as_user` for the
+[owner's group and direct-message history](https://open.feishu.cn/document/ukTMukTMukTM/uYTM5UjL2ETO14iNxkTN/scope-list).
+Both tiers request `offline_access` for refresh authorization; `docs:document.content:read` remains in the document
+pack for compatibility. Full retains `drive:file:download`; the document tier's existing `drive:drive:readonly`
+already covers the readable-file download endpoint. `wiki:node:retrieve` covers child listing, while
+`wiki:wiki:readonly` covers resolving a wiki link; these are different API requirements.
+
+`drive:drive:readonly` does **not** cover the batch metadata endpoint, which needs
+`drive:drive.metadata:readonly` (or the broader write scope). `contact:user.base:readonly` grants the name field,
+but querying another user's contact record also needs `contact:contact.base:readonly`. The p2p chat-name fallback
+needs `im:chat:readonly`, even though `im:chat:read` is sufficient for listing chats.
+
+A missing permission appears as **Reauthorize to add missing permissions**, with **Authorize Again** available
+even when the grant is far from expiry. First publish/approve the app permissions, then authorize the expanded
+user scope pack. Refreshing an old grant does not expand it. When the owner explicitly starts authorization for a
+`scope_missing` binding, the manager attempts to configure the current scopes even if the redirect URL is unchanged;
+without the patch permission it uses the existing device/manual fallbacks. See the official
+[permission application guide](https://open.feishu.cn/document/faq/trouble-shooting/how-to-fix-the-99991672-error).
+
+Sender lookup scope errors are reported separately from readable messages, so message content and cursors can
+still commit. A failed sender-name repair remains pending (`backfill_version` does not advance), including when
+some names were resolved. Reauthorization preserves cursors and the pending repair marker and makes the binding
+due now; the next scheduler tick runs the sync and retries repair automatically. Disabled bindings remain disabled.
+The repair marks its version complete only after it finishes, so later ticks are idempotent.
+
+Senders that `contact/v3` cannot see (external members) are looked up in the chat's member list, read on demand: only
+while a sender of that chat is still unnamed, resuming where it stopped, up to 500 pages of 100. A member who left the
+group is in no list; the binding's name book (`sender_names` cursor, at most 5,000 names, the oldest learned dropped
+first) keeps the names the sync learned from contacts, member lists and @mentions, and the sender-name backfill
+(version 3) also reads the chat around such a sender's message for an @mention of them. Another app's bot is named only
+when a message mentions it: the API that names an app by its id
+([application/v6](https://open.feishu.cn/document/server-docs/application-v6/application/get)) takes a tenant token,
+an admin scope and a custom app of the same enterprise, none of which a user's sync has. A system message without a
+`sender_id` stays unnamed.
+
+The sender-name backfill runs in rounds, one after each sync run until it is done. A round has its own budget
+(`larkSyncNamesBudget`, 90 seconds, apart from the run's) and starts only after the run's messages are committed, so it
+never holds up message sync. Every lookup is paced at five requests a second, so a backlog of external senders (one
+`contact/v3` call each) and a few large groups (up to 500 member pages each) can need more than one round. When the
+budget runs out, the round stops and saves how far it got in the `sender_names:progress` cursor: each large group's
+next member page and which senders the pages already read were checked for, plus the lookups that found nothing. Those
+are tried again after a week. The next round picks up from there, and `backfill_version` advances only once a round
+finishes everything. A timeout, rate limit or passing failure in this step only degrades naming. The binding's health
+stays `ok`, the run is not counted as failed, and the reason goes into `names_warning`, with `names_rounds` counting the
+rounds. Only what the owner has to fix shows in health: a missing contact scope (`scope_missing`) or a refused grant
+(`needs_reauth`). Coverage: `server/internal/modules/lark/larksync/names_progress_test.go`,
+`server/internal/extmgr/larksync_names_test.go`.
+
+Regression coverage: `server/internal/larksyncwire/scopes_test.go` checks the audited permission alternatives;
+`scripts/test/test_lark_sync_scope_guides.py` checks every locale of the three setup guides against both packs;
+`server/internal/extmgr/larksync_impoll_test.go` covers scope refusal followed by authorization and scheduler recovery;
+client sync model/component tests cover the reauthorization prompt and action.
+
+
+The sync's runs commit cursors, the dedup index and the outbox rows together in one transaction; once committed, any round that wrote new messages emits batched, paginated `lark.messages` metadata events (no message bodies) to enabled extensions subscribed to `lark.messages` and explicitly granted `lark.messages.read` (`docs/extensions/extensions.md` "Events").
+
+Requests are rate-limited per binding and per API family, and a 429, `99991400`, `230020` or `1061045` waits as the platform
+asks before trying again. **A read that fails leaves its cursor where it was**: the cursors, the dedup index and what the
+knowledge base will collect are committed together after a run, so nothing is skipped and nothing half-read is kept. A failed
+run tries again 15 minutes later; from the third failure in a row it backs off 1, 6 and then 24 hours. A run that ran out of
+budget or into the rate limit goes on an hour later. An authorization lasts at most 365 days; 14, 7 and 1 day before the end
+the owner gets a reminder to authorize again, and the page shows it.
+
+### One copy of everything
+
+Every piece of content has one canonical key: `feishu_msg:<message_id>`, `feishu_doc:<obj_token>` (a wiki node resolves to
+its document), `feishu_minute:<token>`. The manager's index (Postgres `lark_sync_index`) records each key's revision, body
+hash and every place it was read from (`sources`: binding, account, how it was found). Content read again by another bot,
+another account, or through both Drive and Wiki is written once and only gains a source. A document whose revision grew is
+updated in place; one that arrives late with an older revision never replaces the newer one. The knowledge base applies
+the same rule to its items (`canonical_key`, `revision` and `sources` on `kbwire.Item`).
+
+Alignment with what the Lark gateway already put in the knowledge base: documents and minutes match by the
+token in their URL (a wiki link by its node token), so the existing item is updated in place and lists both sources.
+Messages first use a known pairing of the two chats (the knowledge base's `chats/.crosswalk.json`), then a content
+fingerprint: the same chat name, sender, two-second window and text means the same message, which is not written twice and
+records the pairing for next time.
+
+### Endpoints
+
+Under `/api/v1/bots/feishu/sync` (writes need a full-access device): `GET` the view (accounts, bots, bindings with their
+health and last run; never tokens), `PUT` the schedule, `POST /bots`, `POST /bots/{bot}/register`, `POST /bots/{bot}/scopes`,
+`DELETE /bots/{bot}`, `POST /bots/{bot}/authorize`, `POST /bots/{bot}/authorize/poll`, `POST /oauth`,
+`PUT` or `DELETE /bindings/{key}` and `POST /bindings/{key}/run`. Removing a binding forgets its tokens and cursors; what it
+already put in the knowledge base stays.
+
 ## What it can do (`features`, one switch each in the App)
 
 `PUT /api/v1/bots/feishu` changes only the feature keys supplied in `features`; omitted keys keep their current values,
@@ -201,11 +413,21 @@ Defaults (when first turned on) are `main`, `cards`, `reports` and `topic_cot` (
 
 The bot's chat with the owner is the DM. A group chat is different: anyone in it can write to the bot, and the owner's Persona can reach all of the owner's data. So the bot listens to a group only where the owner has opted in, and then only to the owner, and only inside a topic (#5279: one topic per to-do, see `docs/assistant/todos.md` ("Replies in the thread")).
 
-**Opting in.** The owner sends `/topics` (Chinese alias `/话题群`) in the group chat (only there: in the DM it is an ordinary message that goes to the assistant like any other); `/topics off` (or `/话题群 关`) takes the group out again. The hub checks the sender is the owner, and answers in the group with one line saying it is on / off / already on / was not on. From anyone else, or while the bot is not paired, the command is dropped without a word. It is the hub's own: it never goes to the assistant, and it takes effect before the next message is looked at (the message right after `/topics off` is not read, the one right after `/topics` is). The same list is the `topic_chats` setting: `PUT /api/v1/bots/feishu` takes `topic_chats: [{chat_id, name?}]` (replaces the list; absent leaves it, `[]` empties it; a paired bot is needed; at most 50, ids not empty, no spaces, no repeats; the list is checked before anything of the request is applied, so a list sent together with a new App ID, which unpairs the owner, is a 400 and changes nothing: set the list in a request of its own) and `GET` returns it as `topic_chats: [{chat_id, name?, added_at}]`. It is kept in `bots.feishu` with the owner, so unpairing (or changing the App ID) empties it. Adding and removing a chat are audited (`bot_topic_chat_added`, `bot_topic_chat_removed`).
+**Opting in.** The owner sends `/topics` (Chinese alias `/话题群`) in the group chat (only there: in the DM it is an ordinary message that goes to the assistant like any other); `/topics off` (or `/话题群 关`) takes the group out again. The hub checks the sender is the owner, and answers in the group with one line saying it is on / off / already on / was not on. From anyone else, or while the bot is not paired, the command is dropped without a word. It is the hub's own: it never goes to the assistant, and it takes effect before the next message is looked at (the message right after `/topics off` is not read, the one right after `/topics` is). The same list is the `topic_chats` setting: `PUT /api/v1/bots/feishu` takes `topic_chats: [{chat_id, name?, todo_mode?}]` (replaces the list; absent leaves it, `[]` empties it; a paired bot is needed; at most 50, ids not empty, no spaces, no repeats; the list is checked before anything of the request is applied, so a list sent together with a new App ID, which unpairs the owner, is a 400 and changes nothing: set the list in a request of its own) and `GET` returns it as `topic_chats: [{chat_id, name?, added_at, todo_mode}]`. It is kept in `bots.feishu` with the owner, so unpairing (or changing the App ID) empties it. Adding and removing a chat are audited (`bot_topic_chat_added`, `bot_topic_chat_removed`).
 
 **Home topic group** (#6146). One of the groups on the list is the *home*: where a request from a group that is not on the list opens its topic ("Asking from any group" below; with no home group the request is taken in the DM instead). `/topics home` (Chinese alias `/话题群 主群`) in a group makes it the home, and turns it on if it was not (the owner said so in so many words); only one group is home at a time. With none marked, the first legacy enrollment is home. A strict enrollment is not an implicit home; with only strict groups and none explicitly marked, requests from elsewhere use the DM. Taking the home group out with `/topics off` takes the mark with it, and the first legacy enrollment left is home. `PUT /api/v1/bots/feishu` takes `home: true` on one entry of `topic_chats` (more than one is a 400; a list that says nothing about `home` leaves the mark where it is) and `GET` returns `home: true` on the group that is home now. `feishu.status` carries it as `home_chat`. Setting it is audited (`bot_topic_home`).
 
 **Only respond when I mention the bot** (#10238). This per-group switch is off by default, visible under Settings › Connectors › Lark bot › Topic groups. Add a group there by its chat ID and optional name, select the policy before adding, or change the switch beside an enrolled group. The page shows the saved policy and effective home; **Home topic group** is a separate acknowledged save; **Use default home** clears the explicit choice and restores the legacy fallback (or the DM for isolated-only enrollments). Turning the switch off restores ordinary topic behavior without choosing a home. Strict enrollments retain an internal `explicit_home_only` marker, so later policy changes do not silently redirect requests from other groups. Tightening the policy of an existing legacy enrollment preserves its implicit home. Failed saves retain the previous policy and any enrollment input.
+
+**To-dos in a topic group** (#11813). Set the mode for an enrolled group in Web Settings › Connectors › Lark bot › Topic groups.
+
+| Setting | What happens in an unbound topic |
+| --- | --- |
+| **Answer only** (`answer_only`, default) | The main conversation answers the first message and later replies in that topic. |
+| **Main conversation decides** (`main_decides`) | The main conversation answers in the topic and can link a to-do when the work needs an Agent or sustained follow-up. The bot confirms the creation in one line. |
+| **Always open a to-do** (`always_todo`) | Starting a topic opens and links a to-do automatically. An unbound reply gets the opening hint. |
+
+In all three modes, `/todo`, `/ai`, and explicit requests can open a to-do in an unbound topic. Existing bindings keep their reply routing. See `docs/assistant/todos.md` ("Opening a to-do from a topic") for the exact matching rule. The `todo_mode` field is saved with the group. An older client omitting it on an existing enrollment preserves its saved mode. Enrollments without a saved mode, including those made with `/topics`, use **Answer only**.
 
 `topic_chats` entries accept `require_owner_mention: true|false`; GET always returns its saved boolean. An older client omitting it on an existing row preserves the value. It is stored with the enrollment in `bots.feishu`. A failed durable list write rolls back the in-memory list and returns an error. The list still replaces enrollment as a whole, so clients should refresh before changing it.
 
@@ -221,7 +443,7 @@ Platform delivery and Persona triggering are separate. `im:message.group_at_msg:
 4. The message is in a topic (it has a `thread_id`).
 5. It is not the opt-in command above.
 
-A group message never changes where the owner's pushes go: the DM's chat id (`owner.chat_id`) is only ever set by a message in the DM. The message is handed over without an owner action (it can answer no card). The assistant does not rely on this gate: a `feishu.message` whose `chat_type` is not `p2p` goes to `threadMessage`, not to the DM's road (no commands, no card answers, no `botTargetFor`, never the current target). The to-do bound to the message's topic takes it as a `source = "thread"` decision and its Agent (else the conversation that opened it, else the main chat) gets it; the answer, progress card and notes go back into the same topic with `chat_id` and `in_thread`, and so do the question, plan, permission and terminal-dialog cards of the run (a card whose run was asked in a topic is a reply to that message in the topic). A conversation that has both a private run and a topic's gets the card in the owner's DM, where only the owner sees it, and the topic gets one short line saying the card went there. A card the topic refuses outright (the hub's refusal, because the group was taken off the list; Feishu's "the bot is not in the chat" 230002 or "the chat was dissolved" 232009) goes to the DM as well; any other failure (a timeout, a gateway error) may have gone out, so it is only logged and the card is not sent again. A topic with no open to-do gets one hint per 10 minutes, unless it asks for one: the message that starts a topic, or "/ai …" in a topic bound to nothing, opens a to-do for it and hands the words to the main chat (`docs/assistant/todos.md`, "Opening a to-do from a topic"). Details: `docs/assistant/todos.md` ("Replies in the thread").
+A group message never changes where the owner's pushes go: the DM's chat id (`owner.chat_id`) is only ever set by a message in the DM. The message is handed over without an owner action (it can answer no card). The assistant checks the sender again. A group `feishu.message` goes to `threadMessage`, which routes by topic and skips private-chat commands, card answers and the current target. The to-do bound to the message's topic takes it as a `source = "thread"` decision and its Agent (else the conversation that opened it, else the main chat) gets it; the answer, progress card and notes go back into the same topic with `chat_id` and `in_thread`, and so do the question, plan, permission and terminal-dialog cards of the run (a card whose run was asked in a topic is a reply to that message in the topic). A conversation that has both a private run and a topic's gets the card in the owner's DM, where only the owner sees it, and the topic gets one short line saying the card went there. A card the topic refuses outright (the hub's refusal, because the group was taken off the list; Feishu's "the bot is not in the chat" 230002 or "the chat was dissolved" 232009) goes to the DM as well; any other failure (a timeout, a gateway error) may have gone out, so it is only logged and the card is not sent again. Unbound topics go to the main conversation according to the mode above. A topic bound to a closed to-do gets a reminder to reopen it in the app. Details: `docs/assistant/todos.md` ("Replies in the thread").
 
 ### Asking from any group
 
@@ -271,6 +493,40 @@ The progress card's **Stop** acts only while its actual message is the current w
 - `im:message.group_msg`: every message in the group arrives, no @ needed. It is a sensitive permission and usually needs the enterprise admin's review.
 
 Subscribe to **Receive message v2.0** (`im.message.receive_v1`) as for the DM; the bot has to be in the group. A leading @ of the bot is stripped when reading `/topics`.
+
+## Proxy replies handed off from a group
+
+An authorized extension, or the owner from their own app, can hand the bot a question a teammate asked in a group the bot is in. The bot answers in that group. The question never enters the owner's conversations: the assistant runs it as a guest conversation with a single tool, `bot_group_reply`, and that tool is also how the answer reaches the bot (`server/internal/modules/lark/handoff.go`). Nothing about the handoff makes the chat one the bot may send into (`botChatAllowed` is unchanged), so a card, a progress note, an agent message or a plain `feishu.text` into it is refused as ever.
+
+**The two routes.** Both are the manager's, relayed by the hub like the other `/api/v1/bots/` routes, and each needs its own scope (`docs/extensions/extensions.md`).
+
+- `GET /api/v1/bots/feishu/identity` (scope `bots.feishu.identity`) answers `{enabled, paired, ready, app_id?, bot_open_id?, bot_name?, domain?, capabilities}`. `ready` means the bot can send now. Unknown values are left out; `capabilities` is what this build supports (`["proxy_reply"]`), not the owner's policy. The body never carries a secret, a pairing or registration code, or the owner's identity.
+- `POST /api/v1/bots/feishu/handoffs` (scope `bots.feishu.handoff`, or full credentials) takes `{chat_id, message_id?, in_thread?, ref?, chat_name?, sender_name?, question, context?}`. `chat_id` is required (1 to 100 characters, no whitespace). `message_id` is an optional anchor the bot can read, and the hub refuses it unless the message is in `chat_id`; absent, the bot posts one new message into the chat. `in_thread` needs an anchor. `ref` (optional, at most 120 characters of letters, digits and `:._-`, scoped to the caller) makes a repeat of the same payload return the first handoff with `replayed: true`, and a different payload under the same ref a 409 `handoff_conflict`. `chat_name` and `sender_name` are clipped to 80 characters, one line, with terminal escapes stripped. `question` is required and at most 2000 characters; `context` at most 6000. The body is at most 64 KiB. The call answers once the assistant has accepted: `{handoff: {id, state: "accepted", delivery, expires_at}, replayed}`. `delivery` is `confirm` or `direct`. There is no status route.
+
+**Errors.** Every body is `{error, code}` with a message from the `hub-bots` catalog.
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_handoff` | Bad JSON, a field outside its rule, or an anchor that is not in `chat_id` |
+| 403 | `handoff_off` | The owner switched proxy replies off |
+| 403 | `chat_blocked` | `chat_id` is on the blocklist, which always wins |
+| 403 | `permission_denied` | The scope was not granted, or the caller is an answer-only device |
+| 409 | `bot_off` | The bot is off, unpaired, or not connected |
+| 409 | `handoff_conflict` | `ref` reused with another payload |
+| 429 | `handoff_rate_limited` | The per-chat or daily cap, or too many running; `Retry-After` is set |
+| 503 | `assistant_unavailable` | The assistant is away, does not know `feishu.handoff`, or the settings could not be read |
+
+A hub from before this change answers 404, which a caller treats as "not available". `chat_blocked`, `handoff_off`, `bot_off` and 429 are not retried; a 503 is retried once with the same `ref`.
+
+**Policy.** Kept under `handoff` in `bots.feishu` and set with `PUT /api/v1/bots/feishu` (no client draws it). A chat on `blocked_chats` is refused (`chat_blocked`) and that always wins; `off: true` refuses every handoff (`handoff_off`); a chat on `direct_chats` is answered without asking; every other chat needs the owner's confirmation. The default, when `handoff` was never set, confirms every chat, so an install that never receives a handoff changes nothing. Unpairing or changing the App ID clears the policy. `launcher` names the launcher of the guest run (empty uses the assistant's default; guest runs are Claude Code only).
+
+**Confirm and direct.** In direct mode the guest's one reply is posted at once. In confirm mode the draft is held and the owner is asked with the ordinary decision card (Needs you, a push, every client): one option posts exactly the stored draft, the other drops it. A typed answer or any other option drops it too, and it is never taken by default. The draft is at most 400 characters; a direct reply may be 2000.
+
+**What is posted.** Plain text, in the owner's language: a header naming who asked and the question (clipped), the answer, and a footer saying it is an AI reply for reference. With an anchor it is a reply under that message (in its thread when `in_thread` was set) and is lost if the message is gone, never sent into the chat instead. Without an anchor it is one new message in the chat. At most one message lands: a repeat carries the same idempotency key.
+
+**Limits and audit.** Six handoffs an hour per chat, sixty a day, three running at once; a handoff nobody finished is dropped after six hours. The audit records the policy change, a handoff taken, one refused, one posted and one ended, with the chat id and the handoff id only. The question, the context, the draft, the reply and the caller's names are never stored and never audited.
+
+**Known limitations.** Without an anchor, a topic group gets the reply as a new topic. The chat and sender names in the confirmation come from the caller; only `chat_id` is checked against the owner's lists. The confirmation shows the draft on one line. A live process bubble in the group (a native agent message) is not part of this: the default is to ask the owner before anything is posted.
 
 ## Commands
 
@@ -333,7 +589,9 @@ These routes belong to the hub; `target` and `agents` in the response are querie
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/v1/bots/feishu` | `{enabled, app_id, domain, has_secret, from_config, features{main,cards,all_cards,pushes,sync,agents,reports,board,only_conclusions,report_steps,answer_new_card,topic_cot,read_group}, connected, error, last_event_at, bot_name, owner{name,paired_at}, pairing{code,expires_at}, topic_chats[{chat_id,name,added_at}], nudge_after, target, agents[{title,machine_id,session_id}], larkcli?:{profile,app_id?,same_app,mode,choice,profiles:[{name,app_id?,user?,token_status?}]}}`. `mode` is `config` when `manager.json` fixes `lark.cli.profile`, `chosen` for the app setting, `bot` for the managed bot profile, or `default`; `choice` is the saved app setting. Profiles contain no secrets. |
-| PUT | `/api/v1/bots/feishu` | Changes only supplied fields: `enabled`, `app_id` + `app_secret` (validated first) + `domain`, `features` (merged over the current ones), `topic_chats` (the opted-in group chats, replaced as a whole, "Topic group chats"), `nudge_after` (minutes before the ordinary nudge under an unanswered card, 0 turns both ordinary and deadline nudges off, "Nudging a card nobody answered"), `larkcli_profile` (empty for automatic selection, or an existing `lark-cli profile list` name). A non-empty choice is rejected with 400 when it does not exist and with 409 when `manager.json` fixes `lark.cli.profile`; changing it rebuilds the lark-cli connector while retaining its feed switches. `app_id: ""` clears the credentials saved in the App (falls back to manager.json). The source reply settings are `source_report_delay_minutes` (whole minutes from 0 to 60) and `source_report_full_reply` (boolean). |
+| PUT | `/api/v1/bots/feishu` | Changes only supplied fields: `enabled`, `app_id` + `app_secret` (validated first) + `domain`, `features` (merged over the current ones), `topic_chats` (the opted-in group chats, replaced as a whole, "Topic group chats"), `nudge_after` (minutes before the ordinary nudge under an unanswered card, 0 turns both ordinary and deadline nudges off, "Nudging a card nobody answered"), `larkcli_profile` (empty for automatic selection, or an existing `lark-cli profile list` name). A non-empty choice is rejected with 400 when it does not exist and with 409 when `manager.json` fixes `lark.cli.profile`; changing it rebuilds the lark-cli connector while retaining its feed switches. `app_id: ""` clears the credentials saved in the App (falls back to manager.json). `handoff` sets the proxy-reply policy (`{off?, direct_chats?, blocked_chats?, launcher?}`, an absent key leaves it and `[]` clears a list; "Proxy replies handed off from a group"). The source reply settings are `source_report_delay_minutes` (whole minutes from 0 to 60) and `source_report_full_reply` (boolean). |
+| GET | `/api/v1/bots/feishu/identity` | The bot's public identity (`bots.feishu.identity`): `{enabled, paired, ready, app_id?, bot_open_id?, bot_name?, domain?, capabilities}`. No secrets. |
+| POST | `/api/v1/bots/feishu/handoffs` | Hand a group question to the bot (`bots.feishu.handoff`): "Proxy replies handed off from a group". |
 | POST | `/api/v1/bots/feishu/pair` | Generate a pairing code |
 | DELETE | `/api/v1/bots/feishu/owner` | Unpair (also clears chat state and the opted-in group chats) |
 | POST | `/api/v1/bots/feishu/test` | Send the owner a test message |
@@ -355,6 +613,7 @@ Nothing, when the app is created in one authorization ("Pairing and permissions"
 - Agents (Claude Code / Codex in herdr) have no "text being written", so progress cards show only steps.
 - Card callback tokens (two further updates allowed within 30 minutes) aren't used: after an answer, cards are edited through the update-message endpoint.
 - One hub connects one Lark bot and one owner.
+- A proxy reply has no live process bubble in the group; the answer is one text message, after the owner confirms it unless the chat is listed for direct replies ("Proxy replies handed off from a group").
 
 ## Verification
 

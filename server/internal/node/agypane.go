@@ -509,6 +509,10 @@ func (n *Node) agyConversation(id, pane string) string {
 				n.agyBound = make(map[string]agyPaneBinding)
 			}
 			n.agyBound[pane] = next
+			if n.agyShown == nil {
+				n.agyShown = make(map[string]agyShown)
+			}
+			n.agyShown[id] = agyShown{conversation: next.conversation, at: time.Now()}
 		}
 		n.mu.Unlock()
 		return result
@@ -544,7 +548,7 @@ func sameAgyFile(a, b os.FileInfo) bool {
 }
 
 func agyStepsHistory(conversation string) agyHistory {
-	return agyHistory{token: "agy-pane:" + conversation + ":steps:context-resources-v1:lazy-media:checkpoints:wakes:file-links:full-text:tool-headers"}
+	return agyHistory{token: "agy-pane:" + conversation + ":steps:context-resources-v2:lazy-media:checkpoints:wakes:file-links:full-text:tool-headers"}
 }
 
 // agyRead projects the compact export when present, filling in verified text
@@ -702,6 +706,7 @@ type agyPageParams struct {
 	FromSeq    int    `json:"from_seq"`
 	ThroughSeq int    `json:"through_seq"`
 	UserInputs bool   `json:"user_inputs"`
+	MetaOnly   bool   `json:"meta_only"`
 	FoldWork   bool   `json:"fold_work"`
 }
 
@@ -759,14 +764,17 @@ func (h agyHistory) page(p agyPageParams) any {
 
 func (h agyHistory) pageWith(p agyPageParams, id string, tv *toolViewTracker) any {
 	if p.UserInputs {
-		index := proto.UserInputIndex{History: h.token, Inputs: []proto.UserInputPosition{}}
-		for _, it := range h.items {
-			if agyUserInput(it) && (len(index.Inputs) == 0 || index.Inputs[len(index.Inputs)-1].Seq != it.Seq) {
-				index.Inputs = append(index.Inputs, proto.UserInputPosition{ID: it.ID, Seq: it.Seq})
-			}
+		items := h.items
+		if p.BeforeSeq > 0 {
+			items = items[:agyIndex(items, p.BeforeSeq)]
 		}
-		index.Total = len(index.Inputs)
-		return index
+		if p.MetaOnly {
+			var compact transcript.CompactInputIndex
+			compact.Add(items)
+			return compact.Index(h.token)
+		}
+		inputs := transcript.UserInputPositions(items)
+		return proto.UserInputIndex{History: h.token, Inputs: inputs, Total: len(inputs)}
 	}
 	uses := h.toolUses()
 	items := h.items
@@ -836,7 +844,7 @@ func (n *Node) agyPaneCall(ctx context.Context, method, id, pane string, raw jso
 		return okResult(nil), nil, true
 	case "session.info":
 		return n.agyPaneSessionInfo(id, pane), nil, true
-	case "session.items", "session.item", "session.image", "session.watch":
+	case "session.items", "session.item", "session.image", "session.watch", proto.MethodSessionInputPreviews, proto.MethodSessionItemsWindow:
 	default:
 		return nil, nil, false
 	}
@@ -903,6 +911,10 @@ func (n *Node) agyPaneCall(ctx context.Context, method, id, pane string, raw jso
 	if method == "session.image" {
 		return nil, &rpc.Error{Code: codeNotFound, Message: "no image"}, true
 	}
+	if method == proto.MethodSessionInputPreviews || method == proto.MethodSessionItemsWindow {
+		res, err := serveSessionNavigation(ctx, h, method, raw)
+		return res, err, true
+	}
 	return h.pageWith(p, id, &n.toolViews), nil, true
 }
 
@@ -922,14 +934,20 @@ func (n *Node) agyPaneSessionInfo(id, pane string) map[string]any {
 		if st.Model != "" {
 			info["model"] = st.Model
 		}
+		if st.AppMode != "" {
+			info["permission_mode"] = st.AppMode
+		}
 	}
 	if conversation := n.agyConversation(id, pane); conversation != "" {
+		if workers := n.agySwarmWorkers(conversation); len(workers) > 0 {
+			info["swarm_workers"] = workers
+		}
 		var breakdown *proto.ContextBreakdown
 		if runtimeRow, _, ok := n.runtimes.rowOf(agyAgent + "-" + conversation); ok {
 			if runtimeRow.Model != "" {
 				info["model"] = runtimeRow.Model
 			}
-			if runtimeRow.PermissionMode != "" {
+			if _, hasMode := info["permission_mode"]; !hasMode && runtimeRow.PermissionMode != "" {
 				info["permission_mode"] = runtimeRow.PermissionMode
 			}
 			if runtimeRow.Effort != "" {
@@ -959,6 +977,23 @@ func (n *Node) agyPaneSessionInfo(id, pane string) map[string]any {
 		}
 		if breakdown != nil {
 			info["context_breakdown"] = breakdown
+		}
+	}
+	if cur, _ := info["model"].(string); cur != "" {
+		if shown := n.shownModel(id, cur); shown != "" {
+			info["model"] = shown
+		}
+	} else if shown := n.shownModel(id, ""); shown != "" {
+		info["model"] = shown
+	}
+	n.mu.Lock()
+	if m, ok := n.modes[id]; ok && m.Effort != "" && time.Since(m.EffortAt) <= pendingModelTTL {
+		info["effort"] = m.Effort
+	}
+	n.mu.Unlock()
+	if cur, _ := info["model"].(string); info["effort"] == nil && cur != "" {
+		if e := agyModelEffort(cur); e != "" {
+			info["effort"] = e
 		}
 	}
 	return info

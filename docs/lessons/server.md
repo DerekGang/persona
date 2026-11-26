@@ -646,6 +646,11 @@ removing version markers through it corrupts the immutable release manifest.
 Protect both enabled installs and disabled-policy cleanup, and let the publisher
 activate its verified directory after Hub health confirmation.
 
+When a managed program is atomically replaced, the installed path can point to the new
+inode while the service runs the old one. Inspect the live executable and its supervisor's
+main PID. Send a resident node's idle reload once per observed pair of inodes, and let a
+manager's service watcher wait for the confirmed Hub build and its own idle boundary (#16517).
+
 ## Durable storage receipts do not extend authority (#1187)
 
 Check current declared keys and queue/blob flags before replay lookup, including
@@ -1371,6 +1376,8 @@ Splitting a registry at its first colon reads `[::1]:5000` as `[`, selecting HTT
 ## persona-link passive mode and node service (docs/operations/link.md ("Passive mode", "Installing the node service"), 2026-11-02)
 
 - Link only relays node streams; remote updates belong in node RPC (#1158, `docs/operations/node-update.md`). Each attach creates a new `Node`, so update exclusion and installation transactions must belong to the resident process; closing the current RPC doesn't restart resident node. Shut down the resident service only after the success response is actually written; a separate recovery process rolls back if the new version can't start. Old nodes don't know the update protocol and need one local upgrade first; version mismatch alone mustn't enable a deployment button.
+- **Record the backup's version after executable drift** (#15686). A resident still running V1 can have V2 on disk.
+  Redeploy backs up V2 and records its self-reported version so V2 can clear the restart barrier after rollback.
 
 - Linux `setsid` detaches the process group, not the systemd service cgroup: when node startup fails, the manager kills rollback processes in the same cgroup (#1158). Recovery must run in a separate transient user service and be ready before binary replacement. Complete its readiness handshake before acquiring the update-directory lock, or the parent waits for readiness holding the lock while recovery waits for that lock. Tests use fake `systemd-run`, never installing recovery services on the development machine.
 - A missing identity and an unavailable identity need different fallback decisions (#2910). A Linux zombie keeps both its procfs start time and its `ps -o lstart=` result, so rejecting it in `osproc.Identify` alone still lets a watchdog check count it as alive. Preserve the difference between a live exact identity, a known exited process, and an unreadable identity; only the last needs a weaker reading. Check for known exit even for older markers without exact identities. Tests can hold a deterministic zombie with `waitid(WEXITED|WNOWAIT)` after SIGKILL, then reap it during cleanup.

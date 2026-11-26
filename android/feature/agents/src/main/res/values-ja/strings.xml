@@ -37,6 +37,7 @@
     <string name="agents_subtitle_two">%1$s、%2$s。</string>
     <string name="agents_action_todos">ToDo</string>
     <string name="agents_action_new_session">新規セッション</string>
+    <string name="agents_new_agent_in_project">%1$s にエージェントを作成</string>
     <string name="agents_action_list_settings">リスト設定</string>
     <string name="agents_search_placeholder">スペース、セッション、最新メッセージを検索</string>
     <string name="agents_action_search">検索</string>
@@ -260,7 +261,9 @@
     <string name="agents_dialog_rename_text">タブ名はherdrに同期されます。セッション名はClaudeの/renameで変更され、Macのclaude --resumeにも表示されます。</string>
     <string name="agents_dialog_rename_text_tern">タブ名はTernに同期されます。セッション名はClaudeの/renameで変更され、Macのclaude --resumeにも表示されます。</string>
     <string name="agents_dialog_rename_text_rex">タブ名はRexに同期されます。セッション名はClaudeの/renameで変更され、Macのclaude --resumeにも表示されます。</string>
+    <string name="agents_dialog_rename_text_unified">herdr のタブ名を変更します。CLI がセッション名の変更に対応している場合は、そちらも変更します。</string>
     <string name="agents_dialog_save">保存</string>
+    <string name="agents_dialog_name">名前</string>
     <string name="agents_dialog_tab_name">タブ名（herdrのタブ）</string>
     <string name="agents_dialog_tab_name_tern">タブ名（Ternのタブ）</string>
     <string name="agents_dialog_tab_name_rex">タブ名（Rexのタブ）</string>
@@ -404,6 +407,15 @@
     <string name="agents_todo_state_working">進行中</string>
     <string name="agents_todo_state_follow_up">フォローアップ待ち</string>
     <string name="agents_todo_state_not_started">未着手</string>
+    <string name="agents_todo_state_pr_conflicts">マージ競合あり</string>
+    <string name="agents_todo_state_pr_changes_requested">修正依頼あり</string>
+    <string name="agents_todo_state_pr_checks_failed">チェック失敗</string>
+    <string name="agents_todo_state_pr_in_review">レビュー待ち</string>
+    <string name="agents_todo_state_pr_checks_pending">チェック中</string>
+    <string name="agents_todo_state_pr_waiting_merge">マージ待ち</string>
+    <string name="agents_todo_state_parked_merge_review">レビュー・マージ待ち</string>
+    <string name="agents_todo_state_parked">保留中</string>
+    <string name="agents_todo_state_tracking">追跡中</string>
     <string name="agents_todo_detail">ToDoの詳細</string>
     <string name="agents_todo_gone">ToDoは存在しません</string>
     <string name="agents_todo_gone_hint">削除された可能性があります。</string>
