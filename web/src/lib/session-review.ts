@@ -89,7 +89,14 @@ export function reviewTotals(files: readonly GitReviewFile[]): { added: number; 
 export function reviewDiff(res: Pick<GitReview, "scope" | "base" | "target">): DiffScope {
   const base = res.base.short || res.base.hash?.slice(0, 8) || res.target?.short || res.target?.hash?.slice(0, 8);
   if (res.scope === "uncommitted" || !base) return { kind: "review", scope: "uncommitted" };
-  return { kind: "review", scope: res.scope, base };
+  return {
+    kind: "review",
+    scope: res.scope,
+    base,
+    ...(res.base.hash ? { baseHash: res.base.hash } : {}),
+    ...(res.base.ref ? { ref: res.base.ref } : {}),
+    ...(res.target?.hash ? { target: res.target.hash } : {}),
+  };
 }
 
 // ── the comments of the review under way ──────────────

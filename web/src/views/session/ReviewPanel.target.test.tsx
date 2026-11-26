@@ -9,13 +9,13 @@ vi.hoisted(() => {
   (globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s.replace(/["\\]/g, "\\$&") };
 });
 
-const calls = vi.hoisted(() => ({ targets: [] as { scope: string; session?: string }[], fail: false }));
+const calls = vi.hoisted(() => ({ targets: [] as { scope: string; session?: string; base?: string; target?: string }[], fail: false }));
 vi.mock("../../lib/session-review", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../lib/session-review")>();
   return {
     ...real,
-    loadReview: (_mid: string, _cwd: string, target: { scope: string; session?: string }) => {
-      calls.targets.push({ scope: target.scope, session: target.session });
+    loadReview: (_mid: string, _cwd: string, target: { scope: string; session?: string; base?: string; target?: string }) => {
+      calls.targets.push({ scope: target.scope, ...(target.session ? { session: target.session } : {}), ...(target.base ? { base: target.base } : {}), ...(target.target ? { target: target.target } : {}) });
       if (calls.fail) return Promise.reject(new Error("not a Git repository"));
       return Promise.resolve({
         root: "/w",
@@ -53,8 +53,8 @@ afterEach(() => {
 });
 
 const settle = () => act(async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); });
-const draw = (o: { scope?: ReviewScope; at?: ReviewSpot; opened: object }) =>
-  act(() => root.render(<ReviewPanel mid="m" sid="s" cwd="/w" scope={o.scope} at={o.at} opened={o.opened} onClose={() => {}} />));
+const draw = (o: { scope?: ReviewScope; base?: string; target?: string; at?: ReviewSpot; opened: object }) =>
+  act(() => root.render(<ReviewPanel mid="m" sid="s" cwd="/w" scope={o.scope} base={o.base} target={o.target} at={o.at} opened={o.opened} onClose={() => {}} />));
 
 describe("the review panel opened again", () => {
   it("takes the new opening's scope while it is up, and goes to a file the review lists", async () => {
@@ -74,6 +74,15 @@ describe("the review panel opened again", () => {
     draw({ scope: "turn", opened: {} });
     await settle();
     expect(calls.targets.at(-1)).toEqual({ scope: "turn", session: "s" });
+  });
+
+  it("opens a comment's commit or turn review at its own diff", async () => {
+    draw({ scope: "commit", base: "1234567890abcdef", opened: {} });
+    await settle();
+    expect(calls.targets.at(-1)).toEqual({ scope: "commit", base: "1234567890abcdef" });
+    draw({ scope: "turn", base: "1234567890abcdef", target: "76543210fedcba", opened: {} });
+    await settle();
+    expect(calls.targets.at(-1)).toEqual({ scope: "turn", session: "s", base: "1234567890abcdef", target: "76543210fedcba" });
   });
 
   it("offers This turn beside the other review scopes", async () => {

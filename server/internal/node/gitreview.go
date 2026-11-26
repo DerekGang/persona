@@ -190,8 +190,12 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 			return "", "", reviewErr(proto.CodeBadBase, "not a checkpoint of this session: "+p.Base)
 		}
 		baseHash := p.Base
-		if baseHash == "" && p.Target != "" && targetParent != "" {
-			baseHash = targetParent
+		if baseHash == "" && p.Target != "" {
+			if previous, ok := checkpointBefore(refs, targetRef.Turn); ok {
+				baseHash = previous.Hash
+			} else if targetParent != "" {
+				baseHash = targetParent
+			}
 		}
 		base, err := setBase(baseHash)
 		if err != nil || (p.Target == "" && !p.Live) {
@@ -212,13 +216,7 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 	}
 
 	if len(refs) == 0 {
-		if !p.Live {
-			return "", "", reviewErr(proto.CodeNoCheckpoint, "the session has no completed turn checkpoint yet")
-		}
-		base := headHash
-		res.Target = &proto.GitReviewTarget{Working: true}
-		b, err := setBase(base)
-		return b, "", err
+		return "", "", reviewErr(proto.CodeNoCheckpoint, "the session has no completed turn checkpoint yet")
 	}
 	latest := refs[len(refs)-1]
 	if p.Live {
@@ -250,6 +248,15 @@ func checkpointParent(ctx context.Context, root, hash string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(out), true
+}
+
+func checkpointBefore(refs []checkpointRef, turn int64) (checkpointRef, bool) {
+	for i := len(refs) - 1; i >= 0; i-- {
+		if refs[i].Turn < turn {
+			return refs[i], true
+		}
+	}
+	return checkpointRef{}, false
 }
 
 // reviewBase is the tree the working tree is compared with, written into res.Base. Before the first commit it is the
@@ -369,6 +376,13 @@ func (n *Node) reviewFiles(ctx context.Context, root, base, target string, spec 
 		}
 	}
 	if target == "" {
+		var err error
+		files, err = n.keepLiveUntracked(ctx, root, base, files, seen)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if target == "" {
 		o, err := git(ctx, root, append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, spec...)...)
 		if err != nil {
 			return nil, err
@@ -398,6 +412,107 @@ func (n *Node) reviewFiles(ctx context.Context, root, base, target string, spec 
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
+}
+
+// keepLiveUntracked fixes the one asymmetry of a live checkpoint diff: a file the checkpoint captured while it was
+// untracked in the index is reported deleted when the next turn's working tree still has it. If the disk still has the
+// same blob, it is no change; otherwise it is a new untracked file. The path stays in seen so the later untracked scan
+// does not add it twice.
+func (n *Node) keepLiveUntracked(ctx context.Context, root, base string, files []proto.GitReviewFile, seen map[string]bool) ([]proto.GitReviewFile, error) {
+	candidates := make([]int, 0)
+	for i := range files {
+		if files[i].Status == "deleted" && !files[i].Untracked && !files[i].Refused {
+			candidates = append(candidates, i)
+		}
+	}
+	if len(candidates) == 0 {
+		return files, nil
+	}
+	trackedOut, err := git(ctx, root, "ls-files", "-z", "--cached")
+	if err != nil {
+		return nil, err
+	}
+	tracked := map[string]bool{}
+	for _, p := range splitNul(trackedOut) {
+		tracked[p] = true
+	}
+	out := files[:0]
+	for i := range files {
+		f := files[i]
+		keep := true
+		if f.Status == "deleted" && !tracked[f.Path] {
+			if st, err := os.Lstat(filepath.Join(root, filepath.FromSlash(f.Path))); err == nil && !st.IsDir() {
+				same, err := sameWorkingBlob(ctx, root, base, f.Path, st)
+				if err != nil {
+					return nil, err
+				}
+				if same {
+					seen[f.Path] = true
+					keep = false
+				} else {
+					f.Status, f.Untracked, f.Added, f.Deleted, f.Hunks, f.Big = "added", true, 0, 0, nil, false
+					seen[f.Path] = true
+				}
+			}
+		}
+		if keep {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
+func sameWorkingBlob(ctx context.Context, root, base, path string, st os.FileInfo) (bool, error) {
+	blob, ok := checkpointBlob(ctx, root, base, path)
+	if !ok {
+		return false, nil
+	}
+	working, err := workingBlob(ctx, root, path, st)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, nil
+	}
+	return blob == working, nil
+}
+
+func checkpointBlob(ctx context.Context, root, base, path string) (string, bool) {
+	out, err := git(ctx, root, "ls-tree", "-z", base, "--", ":(top,literal)"+path)
+	if err != nil {
+		return "", false
+	}
+	rec := strings.TrimSuffix(out, "\x00")
+	if i := strings.IndexByte(rec, '\t'); i >= 0 {
+		rec = rec[:i]
+	}
+	f := strings.Fields(rec)
+	if len(f) < 3 || f[1] != "blob" {
+		return "", false
+	}
+	return f[2], true
+}
+
+func workingBlob(ctx context.Context, root, path string, st os.FileInfo) (string, error) {
+	const max = 32 << 20
+	if st.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			return "", err
+		}
+		out, err := gitWithEnvInput(ctx, root, nil, strings.NewReader(target), "hash-object", "--stdin", "--path="+path)
+		return strings.TrimSpace(out), err
+	}
+	if !st.Mode().IsRegular() || st.Size() > max {
+		return "", errors.New("not a regular file within the hash limit")
+	}
+	f, err := os.Open(filepath.Join(root, filepath.FromSlash(path)))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	out, err := gitWithEnvInput(ctx, root, nil, f, "hash-object", "--stdin", "--path="+path)
+	return strings.TrimSpace(out), err
 }
 
 // parseRawDiff reads `git diff --raw -z`: ":srcmode dstmode src dst STATUS\0path\0" ("\0from\0to\0" for a rename or

@@ -26,11 +26,15 @@ Before the first commit, `uncommitted` compares with the empty tree (`base.empty
 
 ## Turn checkpoints
 
-The node captures a working-tree snapshot when a turn ends, in the background, so sending a message never waits for Git.
+The node captures a working-tree snapshot when a turn ends in the background. A later message waits for that capture to
+finish before it starts, so a new turn cannot overtake the snapshot (the wait is bounded by the capture limits below).
 The snapshot is a commit under `refs/persona/checkpoints/<session>/<turn>`; it includes tracked files and new files Git
 would add, respects `.gitignore`, and never touches the user's index, `HEAD`, branches, stash or working tree. A
 private index seeded from the real one keeps Git's stat cache, and snapshot objects are written to a temporary object
 directory and published only when the commit is complete. The end of turn N is the base of turn N+1.
+Captures are serialized per session; a new message waits for the previous turn's capture before it starts, and a turn
+that ends while a capture is running is queued. A node that starts after a turn ended captures the first `done`/`idle`
+state it sees, so a restart does not lose that turn.
 
 A capture is skipped, with the reason in the node log, outside Git or over any of these pilot limits: 2 seconds,
 15,000 tracked files, 250 MiB of snapshot content, or 20 MiB of added or modified content. Repositories with more than
@@ -67,6 +71,7 @@ What it runs, from the repository root:
 the newest checkpoint with the one before it (or `HEAD` as it was when the first turn was captured). `live: true` compares the newest
 checkpoint with the working tree, for a turn still running. A big file asked for on its own sends the chosen `base`
 and `target` back, so it remains the same review even if another turn finishes meanwhile.
+A session with no checkpoint answers `no_checkpoint`; `live` never silently substitutes `HEAD`.
 
 Hunks use the shape the web's diff review already draws (`lib/code-view.ts` `Hunk`): `old_start`, `new_start`, and
 `lines` with their prefix (`" "`, `"+"`, `"-"`, `"\"`), plus `header`, the text after the second `@@`. A side with no
@@ -207,7 +212,7 @@ The comment block names its diff in the `Diff:` line (`lib/comments.ts` `DiffSco
 | uncommitted | `uncommitted` |
 | branch | `branch since <base short hash>` |
 | commit | `since <base short hash>` |
-| turn | `turn <base short hash>` |
+| turn | `turn <base>..<target>` (the review's pinned hashes; a lone base is accepted for older comments) |
 
 A sent or edited message reads it back (`parseDiffLabel`), and the comment card opens the Review panel at its line.
 

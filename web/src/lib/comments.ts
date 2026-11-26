@@ -20,7 +20,17 @@ export type DiffScope =
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string }
   | { kind: "review"; scope: "uncommitted" }
-  | { kind: "review"; scope: "branch" | "commit" | "turn"; base: string };
+  | {
+      kind: "review";
+      scope: "branch" | "commit" | "turn";
+      base: string;
+      /** The full base hash, when the card still has it (the display `base` is short). */
+      baseHash?: string;
+      /** The branch ref a branch review was against. */
+      ref?: string;
+      /** A turn's end checkpoint. */
+      target?: string;
+    };
 
 /** Where picked words sit in the transcript: the message (its `data-items` id) and the offsets in its text. */
 export interface TextAnchor {
@@ -123,17 +133,25 @@ export function truncateLines(lines: readonly string[], max = MAX_CODE_LINES): {
 export function diffLabel(d: DiffScope): string {
   if (d.kind === "review") {
     if (d.scope === "uncommitted") return "uncommitted";
-    return d.scope === "branch" ? `branch since ${d.base}` : `${d.scope === "turn" ? "turn" : "since"} ${d.base}`;
+    if (d.scope === "branch") return `branch since ${d.base}`;
+    if (d.scope === "turn") {
+      const base = d.baseHash ?? d.base;
+      return d.target ? `turn ${base}..${d.target}` : `turn ${base}`;
+    }
+    return `since ${d.baseHash ?? d.base}`;
   }
   return d.kind === "commit" ? `commit ${d.sha.slice(0, 8)}` : d.kind;
 }
 
 /** A `Diff:` line's value read back (diffLabel's). */
 export function parseDiffLabel(v: string): DiffScope | null {
-  const d = /^(staged|unstaged|uncommitted|commit ([0-9a-f]+)|(branch since|since|turn) ([0-9a-f]+))$/.exec(v.trim());
+  const d = /^(staged|unstaged|uncommitted|commit ([0-9a-f]+)|(branch since|since|turn) ([0-9a-f]+)(?:\.\.([0-9a-f]+))?)$/.exec(v.trim());
   if (!d) return null;
   if (d[2]) return { kind: "commit", sha: d[2] };
-  if (d[4]) return { kind: "review", scope: d[3] === "since" ? "commit" : d[3] === "turn" ? "turn" : "branch", base: d[4] };
+  if (d[4]) {
+    const scope = d[3] === "since" ? "commit" : d[3] === "turn" ? "turn" : "branch";
+    return { kind: "review", scope, base: d[4], ...(scope !== "branch" ? { baseHash: d[4] } : {}), ...(scope === "turn" && d[5] ? { target: d[5] } : {}) };
+  }
   return d[1] === "uncommitted" ? { kind: "review", scope: "uncommitted" } : { kind: d[1] as "staged" | "unstaged" };
 }
 
@@ -290,8 +308,24 @@ function parseElementBlock(lines: string[]): DraftQuote | null {
 /** Opens the file or the diff a code comment is about at its lines; false when it does not know where (a bubble read back). */
 export function openSpot(s: CodeSpot): boolean {
   if (!s.mid) return false;
-  if (s.diff?.kind === "review") openPanel({ kind: "review", mid: s.mid, sid: s.sid ?? "", cwd: s.cwd ?? "", scope: s.diff.scope, at: { path: s.path, line: s.from, old: s.old } });
-  else if (s.diff) openPanel({ kind: "git", mid: s.mid, sid: s.sid ?? "", cwd: s.cwd ?? "", at: { path: s.path, diff: s.diff, line: s.from, to: s.to, old: s.old } });
+  if (s.diff?.kind === "review") {
+    const d = s.diff;
+    if (d.scope === "uncommitted") {
+      openPanel({ kind: "review", mid: s.mid, sid: s.sid ?? "", cwd: s.cwd ?? "", scope: d.scope, at: { path: s.path, line: s.from, old: s.old } });
+      return true;
+    }
+    const base = d.scope === "branch" ? d.ref ?? d.baseHash ?? d.base : d.baseHash ?? d.base;
+    openPanel({
+      kind: "review",
+      mid: s.mid,
+      sid: s.sid ?? "",
+      cwd: s.cwd ?? "",
+      scope: d.scope,
+      base,
+      target: d.target,
+      at: { path: s.path, line: s.from, old: s.old },
+    });
+  } else if (s.diff) openPanel({ kind: "git", mid: s.mid, sid: s.sid ?? "", cwd: s.cwd ?? "", at: { path: s.path, diff: s.diff, line: s.from, to: s.to, old: s.old } });
   else openPanel({ kind: "file", mid: s.mid, path: s.path, cwd: s.cwd, line: s.from, to: s.to, sid: s.sid });
   return true;
 }

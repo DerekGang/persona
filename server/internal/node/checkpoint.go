@@ -47,7 +47,10 @@ type checkpointTracker struct {
 	mu      sync.Mutex
 	status  map[string]string
 	running map[string]bool
+	pending map[string]string
+	waiters map[string][]chan struct{}
 	limits  checkpointLimits
+	capture func(context.Context, string, string, int64) (checkpointResult, error)
 }
 
 type checkpointRef struct {
@@ -110,6 +113,9 @@ func (n *Node) noteCheckpointEnds(rows []proto.Session) {
 	if n.checkpoints.running == nil {
 		n.checkpoints.running = map[string]bool{}
 	}
+	if n.checkpoints.pending == nil {
+		n.checkpoints.pending = map[string]string{}
+	}
 	for _, row := range rows {
 		if row.SessionID == "" || seen[row.SessionID] {
 			continue
@@ -117,7 +123,17 @@ func (n *Node) noteCheckpointEnds(rows []proto.Session) {
 		seen[row.SessionID] = true
 		prev, had := n.checkpoints.status[row.SessionID]
 		n.checkpoints.status[row.SessionID] = row.Status
-		if !had || !checkpointTurnEnded(prev, row.Status) || row.Cwd == "" || !checkpointInRepo(row.Cwd) || n.checkpoints.running[row.SessionID] {
+		ended := had && checkpointTurnEnded(prev, row.Status)
+		if !had {
+			// A node that starts after the turn ended sees only done/idle. Capture that first observation too: it
+			// establishes the base for the next turn instead of losing the turn entirely.
+			ended = row.Status == proto.StatusDone || row.Status == proto.StatusIdle
+		}
+		if !ended || row.Cwd == "" || !checkpointInRepo(row.Cwd) {
+			continue
+		}
+		if n.checkpoints.running[row.SessionID] {
+			n.checkpoints.pending[row.SessionID] = row.Cwd
 			continue
 		}
 		n.checkpoints.running[row.SessionID] = true
@@ -152,14 +168,53 @@ func checkpointInRepo(cwd string) bool {
 }
 
 func (n *Node) captureTurnCheckpoint(session, cwd string) {
-	defer func() {
+	for {
+		capture := n.captureCheckpoint
 		n.checkpoints.mu.Lock()
-		delete(n.checkpoints.running, session)
+		if n.checkpoints.capture != nil {
+			capture = n.checkpoints.capture
+		}
 		n.checkpoints.mu.Unlock()
-	}()
-	_, err := n.captureCheckpoint(context.Background(), cwd, session, 0)
-	if err != nil {
-		n.logf("checkpoint %s: %v", checkpointSessionLabel(session), err)
+		_, err := capture(context.Background(), cwd, session, 0)
+		if err != nil {
+			n.logf("checkpoint %s: %v", checkpointSessionLabel(session), err)
+		}
+		n.checkpoints.mu.Lock()
+		if next, ok := n.checkpoints.pending[session]; ok {
+			delete(n.checkpoints.pending, session)
+			n.checkpoints.mu.Unlock()
+			cwd = next
+			continue
+		}
+		delete(n.checkpoints.running, session)
+		waiters := n.checkpoints.waiters[session]
+		delete(n.checkpoints.waiters, session)
+		n.checkpoints.mu.Unlock()
+		for _, ch := range waiters {
+			close(ch)
+		}
+		return
+	}
+}
+
+// waitCheckpoint keeps the next turn from starting while the previous turn's capture is still reading the working tree.
+func (n *Node) waitCheckpoint(ctx context.Context, session string) error {
+	n.checkpoints.mu.Lock()
+	if !n.checkpoints.running[session] {
+		n.checkpoints.mu.Unlock()
+		return nil
+	}
+	if n.checkpoints.waiters == nil {
+		n.checkpoints.waiters = map[string][]chan struct{}{}
+	}
+	ch := make(chan struct{})
+	n.checkpoints.waiters[session] = append(n.checkpoints.waiters[session], ch)
+	n.checkpoints.mu.Unlock()
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -232,6 +287,7 @@ func (n *Node) captureCheckpoint(ctx context.Context, cwd, session string, turn 
 		return fail(checkpointErrReason(ctx, err))
 	}
 	gitDir = strings.TrimSpace(gitDir)
+	cleanupCheckpointTemps(gitDir)
 	commonDir, err := git(ctx, root, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return fail(checkpointErrReason(ctx, err))
@@ -317,7 +373,7 @@ func (n *Node) captureCheckpoint(ctx context.Context, cwd, session string, turn 
 		_ = os.Remove(indexPath)
 		_ = os.Remove(indexPath + ".lock")
 	}()
-	tmpObjects, err := os.MkdirTemp(gitDir, "persona-checkpoint-objects-")
+	tmpObjects, err := os.MkdirTemp(gitDir, checkpointTempPrefix("objects"))
 	if err != nil {
 		return fail(checkpointErrReason(ctx, err))
 	}
@@ -410,6 +466,8 @@ func (n *Node) captureCheckpoint(ctx context.Context, cwd, session string, turn 
 			}
 		}()
 	}
+	// Objects are in the repository before the ref exists: a reader can never resolve the ref to a missing blob. If
+	// update-ref fails, the deferred cleanup removes the pack we published.
 	if err := ctx.Err(); err != nil {
 		return fail("timed out")
 	}
@@ -452,7 +510,7 @@ func pathBytes(ctx context.Context, root string, paths []string) (int64, error) 
 }
 
 func seedCheckpointIndex(gitDir string) (string, error) {
-	f, err := os.CreateTemp(gitDir, "persona-checkpoint-index-")
+	f, err := os.CreateTemp(gitDir, checkpointTempPrefix("index"))
 	if err != nil {
 		return "", err
 	}
@@ -494,6 +552,43 @@ func seedCheckpointIndex(gitDir string) (string, error) {
 	_ = os.Chmod(path, info.Mode().Perm())
 	_ = os.Chtimes(path, info.ModTime(), info.ModTime())
 	return path, nil
+}
+
+func checkpointTempPrefix(kind string) string {
+	return fmt.Sprintf("persona-checkpoint-%s-%d-", kind, os.Getpid())
+}
+
+// cleanupCheckpointTemps removes a crashed earlier node's private index/object directories in this repository. Names
+// carry the PID so this process's concurrent captures are left alone.
+func cleanupCheckpointTemps(gitDir string) {
+	entries, err := os.ReadDir(gitDir)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, e := range entries {
+		name := e.Name()
+		kind := ""
+		for _, k := range []string{"index", "objects"} {
+			if strings.HasPrefix(name, "persona-checkpoint-"+k+"-") {
+				kind = k
+				break
+			}
+		}
+		if kind == "" {
+			continue
+		}
+		rest := strings.TrimPrefix(name, "persona-checkpoint-"+kind+"-")
+		pidText, _, ok := strings.Cut(rest, "-")
+		if ok {
+			if pid, err := strconv.Atoi(pidText); err == nil && pid == os.Getpid() {
+				continue
+			}
+		} else if info, err := e.Info(); err == nil && info.ModTime().After(now.Add(-time.Minute)) {
+			continue // a name from before PIDs were added: give a live writer time to finish
+		}
+		_ = os.RemoveAll(filepath.Join(gitDir, name))
+	}
 }
 
 func checkpointRefs(ctx context.Context, root, session string) ([]checkpointRef, error) {
