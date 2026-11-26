@@ -26,7 +26,7 @@ import { helloDeviceId } from "./device-id";
 import { currentLanguage } from "../i18n";
 import type { AgentMutes } from "./agent-groups";
 import { justFinished } from "./agent-groups";
-import { stateOf } from "./format";
+import { activityOf } from "./format";
 import { timeMs } from "./times";
 import { agentKey, NO_PINS, pinsOf, type AgentPins } from "./pins";
 import { holdNotedSeen, recordMarkedSeen, releaseOpenSeen, releaseSeen, resetSeenVisit } from "./seen-rows";
@@ -132,6 +132,7 @@ function currentAssistantSnapshot(page: string) {
     clearAssistantSnapshot(page);
     return null;
   }
+  if (kept && !kept.assistant.manager && kept.manager) kept.assistant.manager = kept.manager;
   return kept;
 }
 
@@ -313,7 +314,7 @@ onRuntimeChanges((upsert, remove) => {
 });
 
 /** What a summary row (`waiting` present) says by leaving a field out: none (docs/protocol/protocol.md "Summary rows"). */
-const SUMMARY_FLAGS = ["quiet", "awaits_reply", "starting", "awaiting_first_message", "start_error", "start_error_code",
+const SUMMARY_FLAGS = ["view", "locallySeen", "quiet", "awaits_reply", "starting", "awaiting_first_message", "start_error", "start_error_code",
   "turn_error", "turn_error_kind", "turn_error_code", "turn_error_resets_at", "turn_error_resumes"] as const;
 
 /** `row` as a changed list row says it is now: a complete row is the row; a summary row goes over the fields it
@@ -1909,11 +1910,11 @@ export function putTodo(todo: Todo) {
   // A confirmed write is newer than every list read that is still in flight.
   todosAsked.forget();
   if (todo.manager) noteItemManager(`/todos/${encodeURIComponent(todo.id)}`, todo.manager);
-  defaultTodos = defaultTodos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t));
+  defaultTodos = defaultTodos.map((t) => (t.id === todo.id ? { ...t, ...todo, wait: todo.wait } : t));
   olderClosedTodos = todo.done_at && !(todo.start_error && !todo.cancelled_at)
-    ? olderClosedTodos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t))
+    ? olderClosedTodos.map((t) => (t.id === todo.id ? { ...t, ...todo, wait: todo.wait } : t))
     : olderClosedTodos.filter((t) => t.id !== todo.id);
-  set({ todos: state.todos.map((t) => (t.id === todo.id ? { ...t, ...todo } : t)) });
+  set({ todos: state.todos.map((t) => (t.id === todo.id ? { ...t, ...todo, wait: todo.wait } : t)) });
 }
 
 /** Takes a todo the hub just deleted out of the list at once; a /todos answer asked for before the delete is older
@@ -2041,7 +2042,11 @@ export async function refreshTodos(opts?: { coalesce?: boolean }) {
 /** A setting of the assistant's changed from this page (#8324): the copy in `assistant` shows it before the hub answers. */
 export function patchAssistant(patch: Partial<Omit<AssistantInfo, "conversations">>) {
   const a = state.assistant;
-  if (a) set({ assistant: { ...a, ...patch } });
+  if (!a) return;
+  // A Labs receipt can be newer than the last profile response.
+  const assistant = { ...a, ...(state.labsSeen && { labs_seen: state.labsSeen }), ...patch };
+  cacheAssistant(assistant.manager || cacheKey(), assistant);
+  set({ assistant });
 }
 
 const labsSeenByManager = new Map<string, string[]>();
@@ -2063,8 +2068,7 @@ export function acceptLabsSeen(manager: string, ids: string[]) {
   const cached = assistantByManager.get(cacheKey()) ?? currentAssistantSnapshot(pageOf())?.assistant;
   if (cached) {
     const assistant = { ...cached, labs_seen: seen };
-    assistantByManager.set(cacheKey(), assistant);
-    writeAssistantSnapshot(pageOf(), manager, assistant);
+    cacheAssistant(manager, assistant);
   }
   set({ labsSeen: seen });
 }
@@ -2108,14 +2112,15 @@ export async function refreshAssistant(opts?: { coalesce?: boolean }): Promise<b
       replaceDefaultAssistant();
       return false;
     }
+    // Older profiles can omit the owner. The response still belongs to the manager we requested.
+    if (!assistant.manager && manager) assistant.manager = manager;
     if (assistant.labs_seen) assistant.labs_seen = keepLabsSeen(manager || shownManager(), assistant.labs_seen);
     defaultAssistantRetry = "";
     const scope = feedCacheScope();
     const cached = readFeedCache(scope);
     if (cached && (cached.manager ?? "") === from && (cached.machineID !== mainConversationMachine(assistant) || cached.sessionID !== assistant.main)) discardFeedCache(scope);
     restoredAssistant = null;
-    writeAssistantSnapshot(from, manager, assistant);
-    assistantByManager.set(cacheKey(), assistant);
+    cacheAssistant(manager, assistant);
     // its conversations' own requests (feed, stop…) go to it, whichever manager the page shows later
     // (the default's are not noted: with no header the hub finds their manager itself)
     const owner = chosenManager() ?? undefined;
@@ -2142,6 +2147,11 @@ const pageOf = () => chosenManager() ?? "";
  *  the roster is read) or the default once the roster said which that is; "" before (the default's, whose id is not
  *  known yet), moved under the default's id when it is. */
 const cacheKey = () => chosenManager() ?? (defaultKnown() ? defaultManager() : "");
+
+function cacheAssistant(manager: string, assistant: AssistantInfo) {
+  assistantByManager.set(cacheKey(), assistant);
+  writeAssistantSnapshot(pageOf(), manager, assistant);
+}
 
 // The manager whose page is drawn (null: the default's, before the roster said which that is).
 let drawnPage = { page: pageOf(), manager: null as string | null };
@@ -2198,8 +2208,8 @@ export function markSeenLocally(mid: string, sid: string) {
     send({ type: "seen", machine_id: mid, session_id: sid });
     return;
   }
-  if (s && (stateOf(s) === "unread" || justFinished(s, state.mutes))) {
-    recordMarkedSeen(s, stateOf(s) === "idle" ? "just_finished" : "unread", viewed.has(runtimeIdentity(s)));
+  if (s && (activityOf(s) === "unread" || justFinished(s, state.mutes))) {
+    recordMarkedSeen(s, activityOf(s) === "idle" ? "just_finished" : "unread", viewed.has(runtimeIdentity(s)));
   }
   set({ seen: { ...state.seen, [runtimeIdentity(s!)]: deliverSeen(mid, sid, mark) } });
   scheduleSeenCheck();

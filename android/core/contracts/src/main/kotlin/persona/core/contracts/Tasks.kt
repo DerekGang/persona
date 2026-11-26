@@ -44,7 +44,7 @@ data class PlanTask(
     val brief: TaskBrief? = null,
 ) {
     /** The directory's last part: how the user names a project. */
-    val project get() = cwd.trimEnd('/').substringAfterLast('/')
+    val project get() = compactFolderName(cwd)
 }
 
 @KeepGeneratedSerializer
@@ -87,9 +87,9 @@ data class FeedItem(
 
     /**
      * `message`: the reply went out — from this card or from the inbox, on any device (the hub records it on the
-     * card, #1519): when, and what it said (a card sent before the hub recorded it: its draft). Null while not sent.
+     * card, #1519): when, and the recorded text if available. Null while not sent.
      */
-    val sent: SentReply? get() = field("sent_at")?.let { SentReply(it, field("sent")?.takeIf(String::isNotEmpty) ?: field("draft").orEmpty()) }
+    val sent: SentReply? get() = field("sent_at")?.let { SentReply(it, field("sent").orEmpty()) }
 
     /**
      * `message`: the thing the card is about was dealt with elsewhere and nothing went out from this card (#4797):
@@ -510,6 +510,18 @@ fun todoHandOffPrompt(title: String, notes: String, instruction: String): String
 @Serializable(with = TodosResponseSerializer::class)
 data class TodosResponse(val todos: List<Todo> = emptyList())
 
+/**
+ * Streaming wire envelope for `GET /api/v1/todos` (complete or paginated with `?limit`/`?cursor`).
+ * Uses the generated serializer so the whole payload is never materialized into a `JsonObject` DOM;
+ * each [Todo] element still decodes through [TodoSerializer].
+ */
+@Serializable
+data class TodosPageResponse(
+    val todos: List<Todo> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+    @SerialName("has_more") val hasMore: Boolean? = null,
+)
+
 /** A lifecycle card's stable identity; incremental feeds upsert these without replacing the held set. */
 @Serializable
 data class AssistantTaskCard(
@@ -542,7 +554,15 @@ data class FeedResponse(
     @SerialName("task_cards") val taskCards: List<AssistantTaskCard>? = null,
     /** Stable pagination: null on older hubs, empty at EOF, otherwise an opaque continuation cursor. */
     @SerialName("next_cursor") val nextCursor: String? = null,
-)
+) {
+    companion object {
+        /**
+         * Generated serializer for streaming `InputStream` decoding without materializing a whole-response
+         * `JsonObject` DOM; nested [FeedItem] and [TaskPlan] entries still decode through their [WireSerializer]s.
+         */
+        fun streamingSerializer(): kotlinx.serialization.KSerializer<FeedResponse> = generatedSerializer()
+    }
+}
 
 /** The todos changed: pull them again. */
 @KeepGeneratedSerializer

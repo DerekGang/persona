@@ -384,7 +384,7 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 	}
 	n.bindPane(pane, id)
 	n.namePersonaTab(ctx, pane, id) // the tab was marked before the thread was known (personatab.go)
-	st := sessionState{ModelSource: execution.Source, Pane: pane, Launcher: launcher, Cwd: cwd, StartedAt: began.UTC(), Model: execution.Model, ModelEffort: execution.Effort, TaskInstructions: execution.TaskInstructions}
+	st := sessionState{ModelSource: execution.Source, Pane: pane, Launcher: launcher, Cwd: cwd, StartedAt: began.UTC(), Model: execution.Model, ModelEffort: execution.Effort, CodexStartTier: execution.ServiceTier, TaskInstructions: execution.TaskInstructions}
 	if dedicatedInstructions {
 		st.TaskInstructionChannel = "codex"
 	}
@@ -479,7 +479,7 @@ func (n *Node) waitCodexThread(ctx context.Context, pane, cwd, prompt string, be
 			return "", ctx.Err()
 		case <-time.After(min(time.Until(deadline), poll)):
 		}
-		scanBy := time.Now().Add(codexHomeListWait)
+		scanBy := time.Now().Add(n.codexHomeListBudget())
 		for _, home := range n.codexRolloutHomes(pane) {
 			for _, r := range n.firstMessageRollouts(home, scanBy) {
 				if (r.cwd != cwd && r.cwd != resolved) || r.mtime.Before(began.Add(-time.Second)) {
