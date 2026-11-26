@@ -62,6 +62,21 @@ internal object ExtensionViewText {
         return runCatching { java.net.URLDecoder.decode(segments[0].replace("+", "%2B"), "UTF-8") }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * The extension whose settings an extension page asks to open (`persona://settings/extensions/<id>`, the id escaped
+     * as one segment). Only the page's own extension is accepted; it opens Settings › Extensions › that extension.
+     */
+    fun settings(extension: String, url: String?): String? {
+        val uri = runCatching { java.net.URI(url ?: return null) }.getOrNull() ?: return null
+        if (uri.scheme?.lowercase() !in persona.core.contracts.ProtocolCompatibility.appSchemes ||
+            uri.host?.lowercase() != "settings" || uri.userInfo != null || uri.rawQuery != null || uri.rawFragment != null
+        ) return null
+        val parts = uri.rawPath?.removePrefix("/")?.split("/") ?: return null
+        if (parts.size != 2 || parts[0] != "extensions") return null
+        val id = runCatching { java.net.URLDecoder.decode(parts[1].replace("+", "%2B"), "UTF-8") }.getOrNull() ?: return null
+        return id.takeIf { it.isNotBlank() && it == extension }
+    }
+
     /** The most of a Set Up with … text taken (#5278): the pages name a source, they never carry its content. */
     const val ASK_MOST = 8000
 
@@ -98,8 +113,10 @@ internal object ExtensionViewText {
         return parts[0] to parts[2]
     }
 
-    /** Which `open_url` a button may bring back: https, and on the subscription pages also Set Up with …. */
-    fun opens(extension: String, url: String?): Boolean = isHttps(url) || askFrom(extension, url) != null || extension == "space-conversations" && spaceConversation(url) != null
+    /** Which `open_url` a button may bring back: https, this page's own settings, and the reserved pages' links. */
+    fun opens(extension: String, url: String?): Boolean =
+        isHttps(url) || settings(extension, url) != null || askFrom(extension, url) != null ||
+            extension == "space-conversations" && spaceConversation(url) != null
 
     /** A query component, with `+` kept (the pages percent-encode; they do not use form encoding). */
     private fun decodeQuery(raw: String): String? =
