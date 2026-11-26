@@ -16,12 +16,12 @@ import { Icon } from "../../ui/icons";
 import { StatusMark } from "../../ui/StatusMark";
 import { cardLine } from "../chat/dock";
 import { TaskActivityDetail } from "./TaskActivityDetail";
-import { FinishedTasks, NeedsYouBody, OpenEntry, ParkedTasks, ProgressTaskRow, type AssistantTray } from "./Tasks";
+import { FinishedTasks, isDecision, NeedsYouBody, OpenEntry, ParkedTasks, ProgressTaskRow, type AssistantTray } from "./Tasks";
 import { conversationTitle } from "./conversations";
 
 /** What a Needs you row says folded (#5569): its mark, the title and, under it, what it waits for, with the kind at the
  *  end. None for the rows that are one line already (an Agent with no question, a task that only waits, a failed start). */
-function foldedRow(item: NeedsYouItem): { title: string; line?: string; kicker: string } | undefined {
+function foldedRow(item: NeedsYouItem, calmVerify = false): { title: string; line?: string; kicker: string } | undefined {
   if (item.kind === "plan") {
     const first = item.plan.tasks[0]?.title ?? t("assistant-tasks.plan_single");
     return { title: item.plan.tasks.length > 1 ? t("assistant-tasks.needs_more", { title: first, count: item.plan.tasks.length - 1 }) : first, kicker: t("assistant-tasks.plan_waiting") };
@@ -29,10 +29,14 @@ function foldedRow(item: NeedsYouItem): { title: string; line?: string; kicker: 
   if (item.kind === "message") return { title: [field(item.item, "sender"), field(item.item, "chat")].filter(Boolean).join(" · ") || t("assistant-tasks.task_fallback"), line: field(item.item, "text"), kicker: stateName("needs_you") };
   if (item.kind === "agent") return item.asks.length ? { title: sessionTitle(item.session), line: cardLine(item.asks[0]), kicker: interactionKicker(item.asks[0]) } : undefined;
   if (item.asks.length) return { title: item.todo.title, line: cardLine(item.asks[0]), kicker: interactionKicker(item.asks[0]) };
-  if (reviewState(item.todo) === "user_check" && !personalVerificationAsk(item.todo)) return undefined;
+  // In the urgent Needs-you tray a verification whose Pass round has not arrived is already one line (the body's
+  // open-task button), so it has no folded form. The calm To verify tray keeps its folded note + one-click Pass.
+  if (!calmVerify && reviewState(item.todo) === "user_check" && !personalVerificationAsk(item.todo)) return undefined;
   const ask = openAsk(item.todo);
   // a decision held for the briefing says so folded too (#5803): why it did not ring
-  if (ask || item.todo.supervision?.state === "needs_user") return { title: item.todo.title, line: ask?.verdict, kicker: ask?.for_briefing === true ? t("todos.ask_held") : stateName("needs_you") };
+  if (isDecision(item.todo)) return { title: item.todo.title, line: ask?.verdict, kicker: ask?.for_briefing === true ? t("todos.ask_held") : stateName("needs_you") };
+  if (reviewState(item.todo) === "user_check") return { title: item.todo.title, line: ask?.verdict || item.todo.supervision?.reviews?.at(-1)?.note, kicker: t("assistant-tasks.review_user_check") };
+  if (ask) return { title: item.todo.title, line: ask.verdict, kicker: ask.for_briefing === true ? t("todos.ask_held") : stateName("needs_you") };
   return undefined;
 }
 
@@ -48,8 +52,9 @@ function openKey(item: NeedsYouItem): string {
 }
 
 /** A Needs you row. Open the folded line to answer in place; its expanded title opens the asking Agent (or the task
- *  for a task-level decision), while the chevron folds it again. */
-function NeedsYouRow({ item, open, onToggle, onOpenChat }: { item: NeedsYouItem; open: boolean; onToggle: () => void; onOpenChat: () => void }) {
+ *  for a task-level decision), while the chevron folds it again. `verify` draws calm non-attention styling for
+ *  completed tasks awaiting optional owner verification (`user_check`). */
+function NeedsYouRow({ item, open, onToggle, onOpenChat, verify = false }: { item: NeedsYouItem; open: boolean; onToggle: () => void; onOpenChat?: () => void; verify?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const opened = useRef(open);
   useEffect(() => {
@@ -73,14 +78,14 @@ function NeedsYouRow({ item, open, onToggle, onOpenChat }: { item: NeedsYouItem;
   }, [open]);
   const steps = item.kind === "task" ? item.steps : undefined;
   const firstStep = steps?.[0];
-  const showStep = firstStep && item.kind === "task" && !item.asks.length && !openAsk(item.todo) && !(openAsk(item.todo)?.outcome === "decide" || item.todo.supervision?.state === "needs_user");
+  const showStep = firstStep && item.kind === "task" && !item.asks.length && !openAsk(item.todo) && !isDecision(item.todo);
   const shown = showStep ? firstStep : item;
-  const folded = foldedRow(shown) ?? (steps?.length && shown.kind === "task" ?
+  const folded = foldedRow(shown, verify) ?? (steps?.length && shown.kind === "task" ?
     { title: shown.todo.title, kicker: stateName("needs_you") } : undefined);
   // Whether the To-dos page counts this to-do as open (#3331): no attribute on rows that are no to-do. The chip badge
   // is summed from this same flag, so the trays and the header tell one number.
   const countsOpenAttr = item.kind === "task" ? { "data-counts-open": item.countsOpen ? "true" : "false" } : {};
-  if (!folded) return <NeedsYouBody item={item} onOpenChat={onOpenChat} />;
+  if (!folded) return <NeedsYouBody item={item} calmVerify={verify} onOpenChat={onOpenChat} />;
   const openTitle = item.kind === "agent" ? () => openAgent(item.session.machine_id, item.session.session_id)
     : shown.kind === "task" ? () => {
       const ask = shown.asks[0];
@@ -88,7 +93,7 @@ function NeedsYouRow({ item, open, onToggle, onOpenChat }: { item: NeedsYouItem;
       else openTask(shown.todo.id);
     } : undefined;
   const label = <>
-    <StatusMark state="needs_you" />
+    {verify ? <span aria-hidden className="size-2 shrink-0 rounded-full bg-orange" /> : <StatusMark state="needs_you" />}
     <span className="min-w-0 flex-1">
       <span className="block truncate font-semibold">{folded.title}</span>
       {!open && folded.line && folded.line !== folded.kicker && <span className="block truncate text-xs text-ink-2">{folded.line}</span>}
@@ -114,7 +119,7 @@ function NeedsYouRow({ item, open, onToggle, onOpenChat }: { item: NeedsYouItem;
       className={cx("flex w-full min-w-0 items-center gap-2 rounded-control px-3 py-2 text-left text-sm hover:bg-hover", open ? "" : "bg-field")}
     >
       {label}
-      {!open && <span className="max-w-[40%] shrink-0 truncate text-right text-xs text-attention">{folded.kicker}</span>}
+      {!open && <span className={cx("max-w-[40%] shrink-0 truncate text-right text-xs", verify ? "text-ink-2" : "text-attention")}>{folded.kicker}</span>}
       {chevron}
     </button>
   );
@@ -122,7 +127,7 @@ function NeedsYouRow({ item, open, onToggle, onOpenChat }: { item: NeedsYouItem;
   return (
     <div ref={ref} data-needs-row={item.key} data-needs-open {...countsOpenAttr} className="flex scroll-m-2 flex-col gap-1">
       {head}
-      <NeedsYouBody item={shown} nested onOpenChat={onOpenChat} />
+      <NeedsYouBody item={shown} nested calmVerify={verify} onOpenChat={onOpenChat} />
       {steps?.filter((step) => step !== shown).map((step) => (
         <div key={openKey(step)} className="flex min-w-0 flex-col gap-1">
           <OpenEntry title={step.todo.title} onOpen={() => openTask(step.todo.id)} />
@@ -226,6 +231,13 @@ export function AssistantTrayContents({ tray, id, label, expanded, toggleExpande
             or not; one nobody opened yet says Just finished (#10922) */}
         {tray === "finished" && <div data-tray-finished className="divide-y divide-line">
           <Suspense fallback={<Loading />}><FinishedTasks items={entries.finished} conversation={conversation} /></Suspense>
+        </div>}
+        {tray === "verify" && <div data-tray-verify className="flex flex-col gap-2 p-2">
+          {entries.verify.map((item) => {
+            const key = openKey(item);
+            return <NeedsYouRow key={item.key} item={item} open={openRows.has(key)} onToggle={() => toggleRow(key)} verify />;
+          })}
+          {!entries.verify.length && <p className="px-1 py-2 text-sm text-ink-2">{t("assistant-tasks.tray_empty_verify")}</p>}
         </div>}
         {tray === "review" && <div className="divide-y divide-line">
           {entries.review.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} supervisorReview />)}
