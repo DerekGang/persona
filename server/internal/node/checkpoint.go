@@ -49,6 +49,7 @@ type checkpointTracker struct {
 	running map[string]bool
 	pending map[string][]string
 	waiters map[string][]chan struct{}
+	repo    map[string]*sync.Mutex
 	limits  checkpointLimits
 	capture func(context.Context, string, string, int64) (checkpointResult, error)
 }
@@ -116,6 +117,11 @@ func (n *Node) noteCheckpointEnds(rows []proto.Session) {
 	if n.checkpoints.pending == nil {
 		n.checkpoints.pending = map[string][]string{}
 	}
+	if n.checkpoints.repo == nil {
+		n.checkpoints.repo = map[string]*sync.Mutex{}
+	}
+	// The status update and the running/pending reservation are one critical section: waitCheckpoint never observes a
+	// turn as ended before its capture reservation exists.
 	for _, row := range rows {
 		if row.SessionID == "" || seen[row.SessionID] {
 			continue
@@ -207,10 +213,10 @@ func (n *Node) captureTurnCheckpoint(session, cwd string) {
 		delete(n.checkpoints.running, session)
 		waiters := n.checkpoints.waiters[session]
 		delete(n.checkpoints.waiters, session)
-		n.checkpoints.mu.Unlock()
 		for _, ch := range waiters {
 			close(ch)
 		}
+		n.checkpoints.mu.Unlock()
 		return
 	}
 }
@@ -456,6 +462,8 @@ func (n *Node) captureCheckpoint(ctx context.Context, cwd, session string, turn 
 	if _, err := os.Stat(tmpPack); err != nil {
 		return fail("pack is not there")
 	}
+	repoUnlock := n.checkpointRepoLock(commonDir)
+	defer repoUnlock()
 	gcLock, err := acquireCheckpointGCLock(commonDir)
 	if err != nil {
 		return fail(err.Error())
@@ -661,6 +669,21 @@ func acquireCheckpointGCLock(gitDir string) (func(), error) {
 		_ = os.Remove(path)
 	}
 	return nil, fmt.Errorf("could not acquire the git gc lock")
+}
+
+func (n *Node) checkpointRepoLock(repo string) func() {
+	n.checkpoints.mu.Lock()
+	if n.checkpoints.repo == nil {
+		n.checkpoints.repo = map[string]*sync.Mutex{}
+	}
+	lock := n.checkpoints.repo[repo]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		n.checkpoints.repo[repo] = lock
+	}
+	n.checkpoints.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 func checkpointRefs(ctx context.Context, root, session string) ([]checkpointRef, error) {

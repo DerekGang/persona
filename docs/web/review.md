@@ -217,7 +217,7 @@ The comment block names its diff in the `Diff:` line (`lib/comments.ts` `DiffSco
 | uncommitted | `uncommitted` |
 | branch | `branch since <base short hash>` |
 | commit | `since <base short hash>` |
-| turn | `turn <base>..<target>` (the review's pinned hashes; `turn ..<target>` for an unborn repository's first turn; a lone base is accepted for older comments) |
+| turn | `turn <base>..<target>` (the review's pinned hashes; `turn ..<target>` for an unborn repository's first turn; `turn <base>..live` for a live comment; a lone base is accepted for older comments) |
 
 A sent or edited message reads it back (`parseDiffLabel`), and the comment card opens the Review panel at its line.
 

@@ -244,6 +244,21 @@ func TestCheckpointTurnReviewFindsShellChangesAndLiveWork(t *testing.T) {
 	if legacy.Base.Hash != first.Hash || legacy.Target == nil || !legacy.Target.Working {
 		t.Fatalf("legacy turn short base: %+v", legacy)
 	}
+	legacyCompleted, err := r.node.gitReview(context.Background(), proto.GitReviewRequest{
+		Cwd: r.dir, Scope: proto.ReviewTurn, Session: "session-1", Base: r.git("rev-parse", "--short", first.Hash),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyCompleted.Base.Hash != first.Hash || legacyCompleted.Target == nil || legacyCompleted.Target.Hash != second.Hash {
+		t.Fatalf("legacy completed turn short base: %+v", legacyCompleted)
+	}
+	_, err = r.node.gitReview(context.Background(), proto.GitReviewRequest{
+		Cwd: r.dir, Scope: proto.ReviewTurn, Session: "session-1", Base: r.git("rev-parse", "--short", second.Hash),
+	})
+	if e, ok := err.(*rpc.Error); !ok || e.Code != proto.CodeNoCheckpoint {
+		t.Fatalf("legacy short base without a following turn: %v", err)
+	}
 }
 
 func TestCheckpointFirstTurnComparesWithHead(t *testing.T) {
@@ -650,6 +665,33 @@ func TestCheckpointRefFailureRemovesThePublishedPack(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Fatalf("failed ref write left packs: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestCheckpointSameRepoTwoSessionsConcurrent(t *testing.T) {
+	r := newReviewRepo(t, map[string]string{"a.txt": "one\n"})
+	r.write("a.txt", "changed\n")
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, session := range []string{"session-1", "session-2"} {
+		wg.Add(1)
+		go func(session string) {
+			defer wg.Done()
+			_, err := r.node.captureCheckpoint(context.Background(), r.dir, session, 1)
+			errs <- err
+		}(session)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent capture: %v", err)
+		}
+	}
+	for _, session := range []string{"session-1", "session-2"} {
+		if refs := checkpointRefsNow(t, r, session); len(refs) != 1 {
+			t.Fatalf("%s refs: %+v", session, refs)
+		}
 	}
 }
 

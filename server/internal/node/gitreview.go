@@ -171,6 +171,19 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 	baseAllowed := func(hash string) bool {
 		return hash == "" || hash == headHash || byHash[hash].Hash != ""
 	}
+	resolve := func(hash string) (checkpointRef, bool) {
+		if r, ok := byHash[hash]; ok {
+			return r, true
+		}
+		var found checkpointRef
+		matches := 0
+		for _, r := range refs {
+			if strings.HasPrefix(r.Hash, hash) {
+				found, matches = r, matches+1
+			}
+		}
+		return found, matches == 1
+	}
 
 	if p.Base != "" || p.Target != "" {
 		if strings.HasPrefix(p.Base, "-") || strings.ContainsAny(p.Base, " \t\n:") {
@@ -178,18 +191,26 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 		}
 		var targetRef checkpointRef
 		targetParent := ""
+		var baseRef checkpointRef
+		baseIsCheckpoint := false
 		if p.Target != "" {
 			var ok bool
-			targetRef, ok = byHash[p.Target]
+			targetRef, ok = resolve(p.Target)
 			if !ok {
 				return "", "", reviewErr(proto.CodeBadBase, "not a checkpoint of this session: "+p.Target)
 			}
 			targetParent, _ = checkpointParent(ctx, root, targetRef.Hash)
 		}
-		if p.Base != "" && !p.Live && !baseAllowed(p.Base) && p.Base != targetParent {
+		if p.Base != "" {
+			baseRef, baseIsCheckpoint = resolve(p.Base)
+		}
+		if p.Base != "" && !p.Live && !baseAllowed(p.Base) && !baseIsCheckpoint && p.Base != targetParent {
 			return "", "", reviewErr(proto.CodeBadBase, "not a checkpoint of this session: "+p.Base)
 		}
 		baseHash := p.Base
+		if baseIsCheckpoint {
+			baseHash = baseRef.Hash
+		}
 		if baseHash == "" && p.Target != "" {
 			if previous, ok := checkpointBefore(refs, targetRef.Turn); ok {
 				baseHash = previous.Hash
@@ -197,8 +218,15 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 				baseHash = targetParent
 			}
 		}
+		if p.Base != "" && p.Target == "" && !p.Live && baseIsCheckpoint {
+			next, ok := checkpointAfter(refs, baseRef.Turn)
+			if !ok {
+				return "", "", reviewErr(proto.CodeNoCheckpoint, "no completed checkpoint after "+p.Base+" in this session")
+			}
+			targetRef = next
+		}
 		base, err := setBase(baseHash)
-		if err != nil || (p.Target == "" && !p.Live) {
+		if err != nil || (p.Target == "" && !p.Live && targetRef.Turn == 0) {
 			if err != nil {
 				return "", "", err
 			}
@@ -206,8 +234,8 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 		}
 		if p.Live {
 			res.Target = &proto.GitReviewTarget{Working: true}
-			if r, ok := byHash[p.Base]; ok {
-				res.Turn = r.Turn
+			if baseIsCheckpoint {
+				res.Turn = baseRef.Turn
 			}
 			return base, "", nil
 		}
@@ -254,6 +282,15 @@ func checkpointBefore(refs []checkpointRef, turn int64) (checkpointRef, bool) {
 	for i := len(refs) - 1; i >= 0; i-- {
 		if refs[i].Turn < turn {
 			return refs[i], true
+		}
+	}
+	return checkpointRef{}, false
+}
+
+func checkpointAfter(refs []checkpointRef, turn int64) (checkpointRef, bool) {
+	for _, r := range refs {
+		if r.Turn > turn {
+			return r, true
 		}
 	}
 	return checkpointRef{}, false

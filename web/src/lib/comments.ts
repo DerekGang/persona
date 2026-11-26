@@ -141,6 +141,7 @@ export function diffLabel(d: DiffScope): string {
     if (d.scope === "turn") {
       const base = d.baseHash ?? d.base;
       if (d.emptyBase) return d.target ? `turn ..${d.target}` : "turn";
+      if (d.live && !d.target) return `turn ${base}..live`;
       return d.target ? `turn ${base}..${d.target}` : `turn ${base}`;
     }
     return `since ${d.baseHash ?? d.base}`;
@@ -160,13 +161,15 @@ export function parseDiffLabel(v: string): DiffScope | null {
     const scope = since[1] === "since" ? "commit" : "branch";
     return { kind: "review", scope, base: since[2], ...(scope === "commit" ? { baseHash: since[2] } : {}) };
   }
+  const liveTurn = /^turn ([0-9a-f]+)\.\.live$/.exec(value);
+  if (liveTurn) return { kind: "review", scope: "turn", base: liveTurn[1], baseHash: liveTurn[1], live: true };
   const turn = /^turn (?:([0-9a-f]*)\.\.)?([0-9a-f]+)$/.exec(value);
   if (turn) {
     if (turn[1] !== undefined) {
       const base = turn[1];
       return { kind: "review", scope: "turn", base: base || turn[2], ...(base ? { baseHash: base } : { emptyBase: true }), target: turn[2] };
     }
-    return { kind: "review", scope: "turn", base: turn[2], baseHash: turn[2], live: true };
+    return { kind: "review", scope: "turn", base: turn[2], baseHash: turn[2] };
   }
   return null;
 }
