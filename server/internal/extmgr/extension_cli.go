@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -68,7 +69,11 @@ const extensionUsage = `usage: personad extension <command> (also: personad ext,
   auto-upgrade on|off [<id>]        market extensions upgrade themselves (all of them, or one)
   upgrades                          newer versions: going in, waiting for your confirmation, skipped
   audit [<id>] [--limit=N]          who installed, switched, signed in, deleted what, and when, newest first
-                                    (an extension, a connector, feishu for the Feishu bot; all of them without an id)`
+                                    (an extension, a connector, feishu for the Feishu bot; all of them without an id)
+  Writes that can change an extension (install, upgrade, enable, disable, config,
+  secret, market, uninstall) print the resolved home and hub first. They also take
+  --expect-home <absolute path> and --expect-hub <host:port>; a mismatch stops
+  before any preview, request or write.`
 
 // ExtensionCommand runs `personad extension <args>`.
 func ExtensionCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -83,7 +88,8 @@ func ExtensionCommand(ctx context.Context, args []string, stdin io.Reader, stdou
 		return nil
 	}
 	// Before hub.json is read or the hub is called: a mistyped option must not run the command without it.
-	if err := checkExtensionArgs(args); err != nil {
+	inv, err := checkExtensionArgs(args)
+	if err != nil {
 		return err
 	}
 	l := i18n.Terminal()
@@ -93,17 +99,12 @@ func ExtensionCommand(ctx context.Context, args []string, stdin io.Reader, stdou
 	}
 	c := &extensionClient{cfg: cfg, lang: l}
 	flag := func(name string) bool {
-		for _, a := range args[1:] {
-			if a == name {
-				return true
-			}
-		}
-		return false
+		return inv.hasOption(name)
 	}
-	var positional []string // as many as extensionCommandArgs allows
-	for _, a := range args[1:] {
-		if !isExtensionOption(a) {
-			positional = append(positional, a)
+	positional := inv.positional // as many as extensionCommandArgs allows
+	if extensionTargetCommand(args[0], positional) {
+		if err := checkExtensionTarget(l, stdout, c, inv); err != nil {
+			return err
 		}
 	}
 	switch args[0] {
@@ -472,12 +473,29 @@ func unknownExtensionCommand(name string) error {
 	return fmt.Errorf("unknown extension command %q\n%s\n%s", name, clitext.Named(extensionUsage), extensionModelUsage)
 }
 
+// extensionInvocation is a parsed hub command line.
+type extensionInvocation struct {
+	positional []string
+	options    []string
+	values     map[string]string
+}
+
+func (i extensionInvocation) hasOption(name string) bool {
+	return slices.Contains(i.options, name)
+}
+
+func (i extensionInvocation) value(name string) (string, bool) {
+	value, ok := i.values[name]
+	return value, ok
+}
+
 // extensionArgs is what a hub command takes (extensionUsage, docs/extensions/extensions.md "Command line").
 type extensionArgs struct {
-	min, max  int      // positional arguments (a market command's include its own word); max -1: any number
-	options   []string // exact words; one ending in "=" takes a value after it (--token-from=<id>)
-	exclusive bool     // at most one of the options
-	usage     string   // printed with a mistake; extensionUsage when empty
+	min, max     int      // positional arguments (a market command's include its own word); max -1: any number
+	options      []string // exact words; one ending in "=" takes a value after it (--token-from=<id>)
+	valueOptions []string // options that take a value as the next word or after "="
+	exclusive    bool     // at most one of the options
+	usage        string   // printed with a mistake; extensionUsage when empty
 }
 
 // extensionCommandArgs are the hub commands and their arguments; `audit` parses its own, and new / test / pack need
@@ -489,55 +507,52 @@ var extensionCommandArgs = map[string]extensionArgs{
 	"rollback":        {min: 1, max: 1},
 	"attach":          {min: 2, max: 2},
 	"detach":          {min: 1, max: 1},
-	"install":         {min: 1, max: 1, options: []string{"--yes"}},
-	"upgrade":         {min: 2, max: 2, options: []string{"--yes"}},
-	"enable":          {min: 1, max: 1, options: []string{"--cascade"}},
-	"disable":         {min: 1, max: 1, options: []string{"--cascade"}},
+	"install":         {min: 1, max: 1, options: []string{"--yes"}, valueOptions: extensionTargetOptions},
+	"upgrade":         {min: 2, max: 2, options: []string{"--yes"}, valueOptions: extensionTargetOptions},
+	"enable":          {min: 1, max: 1, options: []string{"--cascade"}, valueOptions: extensionTargetOptions},
+	"disable":         {min: 1, max: 1, options: []string{"--cascade"}, valueOptions: extensionTargetOptions},
 	"sandbox":         {min: 2, max: 2},
 	"auth":            {min: 1, max: 2},
-	"config":          {min: 2, max: -1},
-	"secret":          {min: 2, max: 2, options: []string{"--delete"}},
-	"uninstall":       {min: 1, max: 1, options: []string{"--keep-data", "--cascade", "--members"}},
+	"config":          {min: 2, max: -1, valueOptions: extensionTargetOptions},
+	"secret":          {min: 2, max: 2, options: []string{"--delete"}, valueOptions: extensionTargetOptions},
+	"uninstall":       {min: 1, max: 1, options: []string{"--keep-data", "--cascade", "--members"}, valueOptions: extensionTargetOptions},
 	"search":          {max: -1},
 	"auto-upgrade":    {min: 1, max: 2},
 	"dev":             {max: 1},
 	"contributions":   {min: 1, max: 1, usage: extensionModelUsage},
 	"contribution":    {min: 3, max: 3, usage: extensionModelUsage},
 	"market list":     {min: 1, max: 1},
-	"market add":      {min: 2, max: 2, options: []string{"--token", "--token-from="}, exclusive: true},
-	"market set-spec": {min: 3, max: 3},
-	"market remove":   {min: 2, max: 2},
-	"market refresh":  {min: 2, max: 2},
-	"market token":    {min: 2, max: 2, options: []string{"--clear"}},
+	"market add":      {min: 2, max: 2, options: []string{"--token", "--token-from="}, valueOptions: extensionTargetOptions, exclusive: true},
+	"market set-spec": {min: 3, max: 3, valueOptions: extensionTargetOptions},
+	"market remove":   {min: 2, max: 2, valueOptions: extensionTargetOptions},
+	"market refresh":  {min: 2, max: 2, valueOptions: extensionTargetOptions},
+	"market token":    {min: 2, max: 2, options: []string{"--clear"}, valueOptions: extensionTargetOptions},
 }
+
+var extensionTargetOptions = []string{"--expect-home", "--expect-hub"}
 
 // isExtensionOption is a word that is not a positional argument.
 func isExtensionOption(a string) bool { return len(a) > 1 && strings.HasPrefix(a, "-") }
 
-// checkExtensionArgs refuses a hub command line extensionCommandArgs does not allow: an unknown command, an option
-// the command does not take, a missing or an extra argument.
-func checkExtensionArgs(args []string) error {
+// checkExtensionArgs parses a hub command line and refuses one extensionCommandArgs does not allow: an unknown
+// command, an option the command does not take, a missing or an extra argument.
+func checkExtensionArgs(args []string) (extensionInvocation, error) {
+	inv := extensionInvocation{values: map[string]string{}}
 	if args[0] == "audit" {
-		return nil
-	}
-	var positional, options []string
-	for _, a := range args[1:] {
-		if isExtensionOption(a) {
-			options = append(options, a)
-		} else {
-			positional = append(positional, a)
-		}
+		inv.positional = append(inv.positional, args[1:]...)
+		return inv, nil
 	}
 	name := args[0]
 	if name == "market" {
-		if len(positional) == 0 {
-			return errors.New(clitext.Named(extensionUsage))
+		sub, err := extensionMarketSubcommand(args[1:])
+		if err != nil {
+			return inv, err
 		}
-		name += " " + positional[0]
+		name += " " + sub
 	}
 	spec, ok := extensionCommandArgs[name]
 	if !ok {
-		return unknownExtensionCommand(name)
+		return inv, unknownExtensionCommand(name)
 	}
 	usage := clitext.Named(extensionUsage)
 	if spec.usage != "" {
@@ -546,24 +561,137 @@ func checkExtensionArgs(args []string) error {
 	mistake := func(format string, a ...any) error {
 		return fmt.Errorf("%s: %s\n%s", clitext.Named("personad extension "+name), fmt.Sprintf(format, a...), usage)
 	}
-	for _, o := range options {
-		known := func(want string) bool { return o == want || strings.HasSuffix(want, "=") && strings.HasPrefix(o, want) }
+	for i := 1; i < len(args); i++ {
+		a := args[i]
+		if !isExtensionOption(a) {
+			inv.positional = append(inv.positional, a)
+			continue
+		}
+		if base, value, hasValue := strings.Cut(a, "="); hasValue && slices.Contains(spec.valueOptions, base) {
+			if value == "" {
+				return inv, mistake("%s needs a value", base)
+			}
+			if _, exists := inv.values[base]; exists {
+				return inv, mistake("%s is given more than once", base)
+			}
+			inv.values[base] = value
+			continue
+		}
+		if slices.Contains(spec.valueOptions, a) {
+			if i+1 >= len(args) || isExtensionOption(args[i+1]) {
+				return inv, mistake("%s needs a value", a)
+			}
+			if _, exists := inv.values[a]; exists {
+				return inv, mistake("%s is given more than once", a)
+			}
+			inv.values[a] = args[i+1]
+			i++
+			continue
+		}
+		known := func(want string) bool { return a == want || strings.HasSuffix(want, "=") && strings.HasPrefix(a, want) }
 		switch {
-		case strings.HasSuffix(o, "=") && slices.Contains(spec.options, o): // --token-from= with nothing after it
-			return mistake("%s needs a value", o)
+		case strings.HasSuffix(a, "=") && slices.Contains(spec.options, a): // --token-from= with nothing after it
+			return inv, mistake("%s needs a value", a)
 		case !slices.ContainsFunc(spec.options, known):
-			return mistake("unknown option %q", o)
-		case spec.exclusive && o != options[0]:
-			return mistake("%q and %q do not go together", options[0], o)
+			return inv, mistake("unknown option %q", a)
+		case spec.exclusive && len(inv.options) > 0 && a != inv.options[0]:
+			return inv, mistake("%q and %q do not go together", inv.options[0], a)
+		}
+		inv.options = append(inv.options, a)
+	}
+	if len(inv.positional) < spec.min {
+		return inv, errors.New(usage)
+	}
+	if spec.max >= 0 && len(inv.positional) > spec.max {
+		return inv, mistake("unexpected argument %q", inv.positional[spec.max])
+	}
+	return inv, nil
+}
+
+// extensionMarketSubcommand is the first positional word after market. The market subcommand is known before its
+// own options are parsed, so skip options here; in particular, never mistake a target option's value for it.
+func extensionMarketSubcommand(args []string) (string, error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if isExtensionOption(a) {
+			if !strings.Contains(a, "=") && slices.Contains(extensionTargetOptions, a) {
+				i++
+			}
+			continue
+		}
+		return a, nil
+	}
+	return "", errors.New(clitext.Named(extensionUsage))
+}
+
+// extensionTargetCommand says which commands write through the hub and therefore report and check their target first.
+func extensionTargetCommand(command string, positional []string) bool {
+	switch command {
+	case "install", "upgrade", "enable", "disable", "config", "secret", "uninstall":
+		return true
+	case "market":
+		return len(positional) > 0 && slices.Contains([]string{"add", "set-spec", "token", "remove", "refresh"}, positional[0])
+	}
+	return false
+}
+
+// checkExtensionTarget prints the home and loopback hub a write will use, then checks explicit expectations. Nothing
+// here touches the hub or the filesystem beyond the hub.json localHubConfig already read.
+func checkExtensionTarget(l i18n.Lang, w io.Writer, c *extensionClient, inv extensionInvocation) error {
+	home := filepath.Clean(c.cfg.dir)
+	hub := managerconf.CLIHubURL(c.cfg.Listen)
+	wantHome, hasHome := inv.value("--expect-home")
+	wantHub, hasHub := inv.value("--expect-hub")
+	if hasHome && !filepath.IsAbs(wantHome) {
+		return errors.New(i18n.T(l, "extmgr-cli.expect_home_absolute", i18n.Args{"path": wantHome}))
+	}
+	if hasHub {
+		var err error
+		if wantHub, err = expectedHub(wantHub); err != nil {
+			return errors.New(i18n.T(l, "extmgr-cli.expect_hub_address", i18n.Args{"value": inv.values["--expect-hub"]}))
 		}
 	}
-	if len(positional) < spec.min {
-		return errors.New(usage)
+	fmt.Fprintln(w, i18n.T(l, "extmgr-cli.target_home", i18n.Args{"home": home}))
+	fmt.Fprintln(w, i18n.T(l, "extmgr-cli.target_hub", i18n.Args{"hub": hub}))
+	if hasHome && home != filepath.Clean(wantHome) {
+		return errors.New(i18n.T(l, "extmgr-cli.target_home_mismatch", i18n.Args{
+			"actual": home, "expected": filepath.Clean(wantHome),
+		}))
 	}
-	if spec.max >= 0 && len(positional) > spec.max {
-		return mistake("unexpected argument %q", positional[spec.max])
+	if hasHub && !sameHub(hub, wantHub) {
+		return errors.New(i18n.T(l, "extmgr-cli.target_hub_mismatch", i18n.Args{
+			"actual": hub, "expected": wantHub,
+		}))
 	}
 	return nil
+}
+
+func expectedHub(value string) (string, error) {
+	host, port, err := net.SplitHostPort(value)
+	if err != nil || host == "" {
+		return "", errors.New("host:port")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", errors.New("host:port")
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+func sameHub(actual, expected string) bool {
+	u, err := url.Parse(actual)
+	if err != nil {
+		return false
+	}
+	actualHost, actualPort, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return false
+	}
+	expectedHost, expectedPort, err := net.SplitHostPort(expected)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(actualHost, expectedHost) && actualPort == expectedPort
 }
 
 // printPreview is what an install or upgrade will do, in l (the hub wrote the permission lines and warnings in the
