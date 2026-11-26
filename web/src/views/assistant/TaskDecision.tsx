@@ -117,7 +117,7 @@ export function TaskDecision({ todo, rowKey, hideTitle = false, onOpenChat }: { 
 export type NeedsYouPartProps =
   /** A task's decision in the tray. */
   | { decision: Todo; rowKey?: string; hideTitle?: boolean; onOpenChat?: () => void }
-  /** A task's open acceptance or verification ask, with the exact ask the caller resolved. */
+  /** A task's open acceptance ask in the tray. */
   | { accept: Todo; ask: TodoAsk; rowKey?: string; hideTitle?: boolean; countsOpenAttr: { "data-counts-open"?: string } }
   /** A task's decision, acceptance ask, personal verification, or other waiting state in the tray. */
   | { task: Todo; status: TodoStatus; rowKey?: string; hideTitle?: boolean; countsOpenAttr: { "data-counts-open"?: string }; onOpenChat?: () => void }

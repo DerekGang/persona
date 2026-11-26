@@ -3933,7 +3933,9 @@ The web's paged Agents list draws **By to-do** with it (`docs/web/web.md` "By to
 
 #### Quick filters (`sessions_quick_filters`, #6662)
 
-`hello.features` advertises **`sessions_quick_filters`**. Only then does a runtime page or counts read take **`waiting=0|1`** and **`exclude_pane_source=<origin>`**. The web's paged Agents list draws the complete list's quick filters with them (`docs/web/web.md` "Paging hubs"): Needs you `state=needs_you`, Unread `state=unread`, Working `state=working&waiting=0`, Waiting in the background `state=working&waiting=1`, Lark group `pane_source=feishu`, Terminal `pane_source=terminal`, their numbers from one counts read (Working is `state.working` less `background_waiting`); hiding botmux adds `exclude_pane_source=feishu` to every read. Older hubs ignore both keys, so clients send them only when the feature is advertised and otherwise keep the state chips.
+`hello.features` advertises **`sessions_quick_filters`**. Only then does a runtime page or counts read take **`waiting=0|1`** and **`exclude_pane_source=<origin>`**. The web's paged Agents list draws the complete list's quick filters with them (`docs/web/web.md` "Paging hubs"): Needs you `state=needs_you`, Unread `state=unread`, Working `state=working&waiting=0`, Waiting in the background `state=working&waiting=1`, Lark group `pane_source=feishu`, In a tab `pane_source=terminal`. Their numbers come from one counts read (Working is `state.working` less `background_waiting`). Hiding botmux adds `exclude_pane_source=feishu` to every read. Older hubs ignore both keys, so clients send them only when the feature is advertised and otherwise keep the state chips.
+
+With `agents_only=1`, the `terminal` filter and its count omit rows whose effective state is `offline`, even if a saved terminal reference remains. Those sessions still appear in unfiltered results and retain their origin in general session queries.
 
 #### Just finished rows (`sessions_just_finished`, #9751)
 
