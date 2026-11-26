@@ -18,7 +18,12 @@ The configs live outside the repo: releases run in a clean worktree (`docs/opera
 
 Use Persona names for new installs. The canonical binary is `personad`, the connector is `persona-link`, runtime state defaults to `~/.persona`, and build/deploy configuration defaults to `~/.config/persona/config.json`. Use `PERSONA_HOME` and `PERSONA_CONFIG` for explicit overrides. Existing installs can keep the service names, state roots and configuration supported by the [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibility.md).
 
-For an existing install, follow the [in-place upgrade checklist](upgrade.md#in-place-upgrade-for-existing-installs) under the operator's approved upgrade plan. The [historical cutover](persona-cutover.md) describes an earlier coordinated replacement. Preserve the active storage and select the intended root explicitly if there are two independent stores.
+The [in-place upgrade checklist](upgrade.md#in-place-upgrade-for-existing-installs) records the supported
+compatibility path and the checks to prepare for an existing install. It does not authorize a production
+update by itself; the production-authorization boundary remains unresolved in
+[#1102](https://github.com/nwverse/persona/issues/1102). The [historical cutover](persona-cutover.md)
+describes an earlier coordinated replacement and keeps its own prohibition. Preserve the active storage and
+select the intended root explicitly if there are two independent stores.
 
 Keep the registered bundle and application IDs, App Groups, iCloud containers and keychain access groups in the private configuration. The [naming contract](rename.md) describes the native compatibility path for persisted preferences and system identities. The avatar model uses `persona`. The two bundled choices are Mochi (`persona`) and Milk Frog (`nwverse`). Retired choices resolve to Mochi, as described in [Avatars](../apple/persona.md).
 

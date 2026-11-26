@@ -1,6 +1,6 @@
 # Persona naming cutover
 
-代码与界面使用 **Persona**。2026-11-07 的兼容约定取代了 #277 的一次性硬切换方案。现有安装按[原位升级指引](upgrade.md#in-place-upgrade-for-existing-installs)保留实际服务和状态目录，并按[滚动升级兼容清单](../protocol/rolling-upgrade-compatibility.md)核对各端版本。生产升级遵循安装所有者批准的方案，历史[切换操作](persona-cutover.md)另有维护授权要求。
+代码与界面使用 **Persona**。2026-11-07 的兼容约定取代了 #277 的一次性硬切换方案。现有安装按[原位升级指引](upgrade.md#in-place-upgrade-for-existing-installs)保留实际服务和状态目录，并按[滚动升级兼容清单](../protocol/rolling-upgrade-compatibility.md)核对各端版本。该兼容清单和升级指引不单独授权生产操作；生产授权边界仍由 [#1102](https://github.com/nwverse/persona/issues/1102) 决定，历史[切换操作](persona-cutover.md)的禁令则继续有效。
 
 ## Registered application identities remain unchanged
 

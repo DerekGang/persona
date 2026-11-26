@@ -23,7 +23,12 @@ The manager's own sections of the configuration moved out of `hub.json` into `ma
 
 ## In-place upgrade for existing installs
 
-The [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibility.md) covers existing installs that use the former names. Use the installed service and its actual state directory, and follow the update procedure for that installation. Schedule production changes under the installation owner's approved plan. The [historical coordinated cutover](persona-cutover.md) has its own approval requirements.
+The [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibility.md) covers existing
+installs that use the former names. Use the installed service and its actual state directory, and follow the
+update procedure for that installation. This checklist records compatibility and recovery planning; it does
+not by itself authorize production changes. The production-authorization boundary remains unresolved in
+[#1102](https://github.com/nwverse/persona/issues/1102). The
+[historical coordinated cutover](persona-cutover.md) keeps its own prohibition.
 
 1. **Record the versions and take backups.** Identify the hub, its managers, the nodes, Persona Link, and the oldest clients that must keep working.
    Take the [backups below](#backups) before the first update. Include all hub and manager databases, their matching state and sealing keys,

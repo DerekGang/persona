@@ -1,12 +1,27 @@
 # Persona-only cutover (#277)
 
-> **Historical plan.** For an existing installation, use the [in-place upgrade checklist](upgrade.md#in-place-upgrade-for-existing-installs) and the [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibility.md). The production restrictions on this page are for the coordinated replacement described below.
+> **Historical plan.** For compatibility planning on an existing installation, use the
+> [in-place upgrade checklist](upgrade.md#in-place-upgrade-for-existing-installs) and the
+> [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibility.md). This page does not
+> lift its production prohibition; that authorization boundary remains unresolved in
+> [#1102](https://github.com/nwverse/persona/issues/1102).
 
 ## Authorization and release boundary
 
-The original plan was a **one-time, coordinated maintenance operation**. It targeted an installation with only Persona names and with every peer converted together. The later [naming contract](rename.md) records the decision to support rolling upgrades for existing installations.
+The original plan was a **one-time, coordinated maintenance operation**. It targeted an installation with only
+Persona names and with every peer converted together. The later [naming contract](rename.md) records the
+decision to support rolling upgrades for existing installations.
 
-The original approval covered source changes and isolated rehearsals, with Apple work limited to source changes. Applying this historical procedure to production requires completed Mac verification and a maintenance window explicitly approved by the installation owner. Treat `--approve` as a tool argument and obtain operational approval separately.
+**Production operations are currently prohibited.** The authorized work is source text and sandbox
+rehearsals only. A successful rehearsal, a merged change, an installation owner's plan, or an `--approve`
+flag does not lift this restriction. Do not run this historical procedure against a production install.
+The restriction can be changed only by the maintainer decision in
+[#1102](https://github.com/nwverse/persona/issues/1102), followed by the separate operational approval
+described below.
+
+After that decision, applying this historical procedure would require completed Mac verification and a
+maintenance window explicitly approved by the installation owner. Treat `--approve` as a tool argument and
+obtain operational approval separately.
 
 Freeze one commit and a complete artifact set for the hub, every manager, every node/link/runtime, relay, web, iOS, watch, Mac, Android, and extensions before scheduling the window. Do not use a blue-green switch: its old and new processes overlap. Do not bring an unconverted machine or old client back into the fleet. An unreachable computer/device delays acceptance; it is not silently left on the old release.
 
