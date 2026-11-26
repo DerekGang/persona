@@ -1,8 +1,24 @@
 import Foundation
 
+/// What the Agents search reads (#7443): the web's Filter › Search in (`SEARCH_SCOPES`), in its order. Chosen in the
+/// list's ⋯ menu (Search In) and kept, as the grouping is.
 nonisolated enum AgentSearchScope: String, CaseIterable, Identifiable, Sendable {
     case all, title, conversation, user, assistant, errors
     var id: String { rawValue }
+
+    /// Where the choice is kept: a user setting, as the row style's (`agents.rowStyle`). No screen ever wrote the
+    /// developer key it had before (`dev.searchScope`), so nothing moves over.
+    static let key = "agents.searchScope"
+
+    /// The scope a list applies: none until something is searched, so a closed search shows the whole list; an open
+    /// search under Errors shows the Agents with an error before anything is typed, as the web's does.
+    func applied(query: String, searching: Bool) -> Self {
+        !query.isEmpty || (searching && self == .errors) ? self : .all
+    }
+
+    /// Whether an applied scope with this query is a search: something typed, or a scope that lists on its own (Errors,
+    /// while searching). An empty list is then a search with no results, never the first-run screen.
+    func isSearch(query: String) -> Bool { !query.isEmpty || self != .all }
 }
 
 nonisolated struct AgentEvidenceSnippet: Equatable, Sendable {
@@ -336,7 +352,8 @@ nonisolated struct AgentListProjection: Sendable {
 
     /// The hub's paged totals for the same immutable space, with manager routing and hub scoping preserved.
     static func aggregateScope(_ space: SpaceGroup, settings: Settings) -> RuntimeSessionLists.Scope {
-        settings.scope(machine: space.machineID, hub: space.group, space: space.spaceID == "-" ? "" : space.spaceID)
+        settings.scope(machine: space.machineID, hub: space.group,
+                       space: space.workspaceGroupID ?? (space.spaceID == "-" ? "" : space.spaceID))
     }
 
     static func scopeKey(_ scope: RuntimeSessionLists.Scope) -> String {
@@ -372,7 +389,7 @@ nonisolated struct AgentListProjection: Sendable {
             : { $0.state.isLive || settings.pinned($0.key) || inPinnedWorkspace($0) }
         // A row a quick filter showed stays a row while it is on, a subtask answered under Needs You too.
         let forest = CodexTasks.build(sessions, ownRows: settings.filter == .all ? [] : settings.kept, runs: runs)
-        let admits: (Session) -> Bool = { session in
+        let admitsScope: (Session) -> Bool = { session in
             guard !session.assistant else { return false }
             guard settings.machine.isEmpty || session.machineRef.path == settings.machine else { return false }
             guard !settings.multiHub || HubFilter.matches(settings.hub, session.group) else { return false }
@@ -404,6 +421,10 @@ nonisolated struct AgentListProjection: Sendable {
             if let hrs = parsed.sinceHours {
                 guard let updated = session.updatedAt, (now ?? Date()).timeIntervalSince(updated) <= hrs * 3600 else { return false }
             }
+            return true
+        }
+        let admits: (Session) -> Bool = { session in
+            guard admitsScope(session) else { return false }
             if settings.query.isEmpty && settings.searchScope == .all { return true }
             if settings.pagedGroups.contains(session.group) && parsed.terms.isEmpty && settings.searchScope == .all { return true }
             return session.matchesScope(settings.searchScope, terms: parsed.terms)
@@ -444,8 +465,16 @@ nonisolated struct AgentListProjection: Sendable {
 
         // A selected grouping builds its own structure, not every alternative on each body evaluation.
         if settings.grouping == "space" {
-            let groups = SpaceGroup.build(result.unpinned).map { group in
+            // Folder metadata comes from every row the scope admits, before quick filters and pinned presentation:
+            // filtering to one minority folder must not move the heading's qualifier or New Agent target.
+            let complete = SpaceGroup.withProjectFolders(SpaceGroup.build(forest.roots.filter(admitsScope), byProject: true),
+                                                         machines: result.machinesByRef)
+            let folders = complete.reduce(into: [String: AgentProjectFolder]()) { out, group in
+                if let folder = group.projectFolder { out[group.id] = folder }
+            }
+            let groups = SpaceGroup.build(result.unpinned, byProject: true).map { group in
                 var group = group
+                group.projectFolder = folders[group.id]
                 let scope = aggregateScope(group, settings: settings)
                 result.scopes[group.id] = scope
                 group.bounded = settings.pagedGroups.contains(group.group)
@@ -469,9 +498,12 @@ nonisolated struct AgentListProjection: Sendable {
                 if !machine.online { workspace.online = false }
                 return workspace
             }
+            // A worktree with no Agent has no title, conversation or error: a search in anything but Full text does
+            // not find it by its name or path (#7443).
+            let scoped = settings.searchScope != .all && (!settings.query.isEmpty || settings.searchScope == .errors)
             result.tree = RepoTree.build(result.unpinned.filter { $0.archived != true && ($0.state.isLive || inPinnedWorkspace($0)) }, machines: input.machines.map(\.ref),
-                                         workspaces: catalog, includeEmpty: settings.filter == .all,
-                                         showEmptyWorkspaces: settings.showEmptyWorkspaces, search: settings.query,
+                                         workspaces: catalog, includeEmpty: settings.filter == .all && !scoped,
+                                         showEmptyWorkspaces: settings.showEmptyWorkspaces, search: scoped ? "" : settings.query,
                                          navigationSessions: result.pinnedAgents.filter { $0.archived != true })
             result.byHost = settings.machine.isEmpty && result.tree.count > 1
             for host in result.tree {

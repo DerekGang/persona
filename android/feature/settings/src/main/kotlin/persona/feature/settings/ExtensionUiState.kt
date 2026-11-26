@@ -260,6 +260,8 @@ internal object ExtensionViewText {
         "graph" -> !item.nodes.isNullOrEmpty()
         // UI version 11 (#12544): the description also labels the poster or text fallback.
         "scene" -> !item.alt.isNullOrBlank()
+        // UI version 12: a map needs a viewport, markers, routes, or a text fallback.
+        "map" -> item.viewport != null || !item.markers.isNullOrEmpty() || !item.routes.isNullOrEmpty() || !item.alt.isNullOrBlank()
         else -> false
     }
 

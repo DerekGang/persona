@@ -15,6 +15,10 @@ import kotlinx.serialization.json.JsonDecoder
 import persona.core.contracts.generated.ExtensionGauge
 import persona.core.contracts.generated.ExtensionGraphEdge
 import persona.core.contracts.generated.ExtensionGraphNode
+import persona.core.contracts.generated.ExtensionMapLink
+import persona.core.contracts.generated.ExtensionMapMarker
+import persona.core.contracts.generated.ExtensionMapRoute
+import persona.core.contracts.generated.ExtensionMapViewport
 import persona.core.contracts.generated.ExtensionSceneCamera
 import persona.core.contracts.generated.ExtensionSceneLabel
 import persona.core.contracts.generated.ExtensionScenePin
@@ -107,6 +111,8 @@ data class ExtensionUiContext(
      * Sent even when empty (`""`): the key says this app opens Set Up with …. Never set for an extension.
      */
     val assistant: String? = null,
+    /** Components this client cannot draw even when it supports the rest of the UI version. */
+    val unsupported: List<String>? = null,
 )
 
 /**
@@ -345,6 +351,12 @@ data class ExtensionViewItem(
     val alt: String? = null,
     /** image: `square | landscape | wide | portrait | auto` (landscape when none). */
     val aspect: String? = null,
+    val viewport: ExtensionMapViewport? = null,
+    val markers: List<ExtensionMapMarker>? = null,
+    val routes: List<ExtensionMapRoute>? = null,
+    val links: List<ExtensionMapLink>? = null,
+    val static: Boolean? = null,
+    @SerialName("show_list") val showList: Boolean? = null,
     /** image: `fill` (cropped, the default) or `fit` (all of it). */
     val fit: String? = null,
     /** image: tapping does nothing (else the picture opens full screen). */
