@@ -8,7 +8,8 @@ import { openAgent, openTask } from "../../lib/handoff";
 import { interactionKicker } from "../../lib/row-line";
 import { stateName } from "../../lib/state-labels";
 import { useStore } from "../../lib/store";
-import { openAsk } from "../../lib/todos";
+import { openAsk, personalVerificationAsk } from "../../lib/todos";
+import { reviewState } from "../../lib/supervision";
 import type { Interaction, Session } from "../../lib/types";
 import { Button, cx, IconButton, Loading } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
@@ -28,6 +29,7 @@ function foldedRow(item: NeedsYouItem): { title: string; line?: string; kicker: 
   if (item.kind === "message") return { title: [field(item.item, "sender"), field(item.item, "chat")].filter(Boolean).join(" · ") || t("assistant-tasks.task_fallback"), line: field(item.item, "text"), kicker: stateName("needs_you") };
   if (item.kind === "agent") return item.asks.length ? { title: sessionTitle(item.session), line: cardLine(item.asks[0]), kicker: interactionKicker(item.asks[0]) } : undefined;
   if (item.asks.length) return { title: item.todo.title, line: cardLine(item.asks[0]), kicker: interactionKicker(item.asks[0]) };
+  if (reviewState(item.todo) === "user_check" && !personalVerificationAsk(item.todo)) return undefined;
   const ask = openAsk(item.todo);
   // a decision held for the briefing says so folded too (#5803): why it did not ring
   if (ask || item.todo.supervision?.state === "needs_user") return { title: item.todo.title, line: ask?.verdict, kicker: ask?.for_briefing === true ? t("todos.ask_held") : stateName("needs_you") };
@@ -147,7 +149,7 @@ function OwnAskRow({ ix, onOpen }: { ix: Interaction; onOpen: () => void }) {
 
 /** The tray loads when one of the assistant's capsules is opened. */
 export function AssistantTrayContents({ tray, id, label, expanded, toggleExpanded, openBoard, close,
-                                       conversation, entries, waiting, needsCount, ownAsks, openRows,
+                                       conversation, entries, waiting, directWaiting, needsCount, ownAsks, openRows,
                                        toggleRow, openOwn, showShelved, toggleShelved }: {
   tray: AssistantTray;
   id: string;
@@ -159,6 +161,7 @@ export function AssistantTrayContents({ tray, id, label, expanded, toggleExpande
   conversation: string;
   entries: AssistantEntries;
   waiting: readonly NeedsYouItem[];
+  directWaiting: boolean;
   needsCount: number;
   ownAsks: readonly Interaction[];
   openRows: ReadonlySet<string>;
@@ -172,7 +175,7 @@ export function AssistantTrayContents({ tray, id, label, expanded, toggleExpande
   // switch off, or every row this conversation's, the tray is as it was.
   const foldBackground = useStore((s) => s.assistant?.main_background_folded) !== false;
   const conversations = useStore((s) => s.assistant?.conversations);
-  const groups = foldBackground ? needsYouBySupervisor(waiting, conversation) : [{ supervisor: conversation, items: waiting }];
+  const groups = foldBackground ? needsYouBySupervisor(waiting, conversation, directWaiting) : [{ supervisor: conversation, items: waiting }];
   const own = groups[0].items;
   const asking = own.filter(isAsking);
   const rest = own.filter((item) => !asking.includes(item));
