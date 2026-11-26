@@ -1,6 +1,6 @@
 // Wire types for the external source bindings and policies endpoints.
 import { api, ApiError, enc } from "../../lib/api";
-import { stampedHeaders } from "../../lib/manager-choice";
+import { ownerHeaders, stampedHeaders } from "../../lib/manager-choice";
 import type { LeaderInfo } from "../../lib/direction-names";
 
 export interface ExternalNode {
@@ -48,6 +48,8 @@ export type BindingMatch = ExternalTarget & { external_ref: ExternalRef } & (
   | { source: "explicit"; binding_id: string }
   | { source: "repository_link"; repository_role: "delivery" | "reference" }
 );
+
+type LookupMatch = BindingMatch | (ExternalTarget & { external_ref: ExternalRef; source: "lark_topic" });
 
 export type PolicySource = "default" | "channel" | "container" | "item" | "binding";
 export interface PolicyOrigin {
@@ -107,7 +109,7 @@ export function deleteExternalBinding(manager: string, id: string) {
 }
 
 export function lookupExternalBindings(manager: string, ref: ExternalRef, signal?: AbortSignal) {
-  return api<{ path: ExternalRef[]; matches: BindingMatch[] }>(
+  return api<{ path: ExternalRef[]; matches: LookupMatch[] }>(
     withQuery(`${BINDINGS}/lookup`, { external_ref: JSON.stringify(ref) }),
     { headers: stampedHeaders(manager), signal },
   );
@@ -115,13 +117,13 @@ export function lookupExternalBindings(manager: string, ref: ExternalRef, signal
 
 export function externalBindingSummary(manager: string, provider?: string, channel?: string, signal?: AbortSignal) {
   return api<{ bindings: BindingMatch[] }>(withQuery(`${BINDINGS}/summary`, { provider, channel }), {
-    headers: stampedHeaders(manager), signal,
+    headers: ownerHeaders(manager), signal,
   });
 }
 
 export function readExternalPolicy(manager: string, ref: ExternalRef, signal?: AbortSignal) {
   return api<ScopedPolicy>(withQuery(POLICIES, { external_ref: JSON.stringify(ref) }), {
-    headers: stampedHeaders(manager), signal,
+    headers: ownerHeaders(manager), signal,
   });
 }
 
@@ -138,6 +140,6 @@ export function effectiveExternalPolicy(manager: string, ref: ExternalRef, signa
 }
 
 export async function readExternalDirections(manager: string, signal?: AbortSignal) {
-  const result = await api<{ leaders: LeaderInfo[] }>("/assistant/leaders", { headers: stampedHeaders(manager), signal });
+  const result = await api<{ leaders: LeaderInfo[] }>("/assistant/leaders", { headers: ownerHeaders(manager), signal });
   return result.leaders ?? [];
 }
