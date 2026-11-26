@@ -1300,7 +1300,7 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		return n.restoreModel(ctx, p.SessionID)
 	}
 	if method == "session.speed" {
-		return ok(n.setCodexSpeed(ctx, p.SessionID, p.ServiceTier))
+		return ok(n.setSessionSpeed(ctx, p.SessionID, p.ServiceTier))
 	}
 	if method == "session.ultracode" {
 		return ok(n.setUltracode(ctx, p.SessionID, p.Ultracode, p.DismissLost))
@@ -1922,8 +1922,7 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		}
 		// Only Claude Code has a session id before it starts; another agent picks its own (start_agent.go).
 		asyncAgent := n.startAgentType(p.Launcher, p.AgentType)
-		if p.Async && p.ResumeSessionID == "" && (p.AgentType == "" || p.AgentType == "claude") &&
-			asyncAgent != traexAgent && asyncAgent != ompAgent && asyncAgent != agyAgent {
+		if p.Async && p.ResumeSessionID == "" && asyncAgent == "claude" {
 			s, err := n.startAsyncIn(p.Host, p.SessionID, p.Cwd, p.Launcher, p.Prompt, p.WorkspaceID, p.PermissionMode, p.Effort, tab, modelExecution{CodexEffortFallback: p.CodexEffortFallback, Source: p.ModelSource, InPane: p.InPane, PlanThen: p.PlanThen, Model: p.Model, Effort: p.Effort, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Ultracode: p.Ultracode, SecretTicket: p.SecretTicket, Goal: goal, Speed: p.Speed, TaskInstructions: p.TaskInstructions, TaskAttachments: p.TaskAttachments, taskSpace: taskSpace})
 			return n.creationResult(s, err, p.ResumeSessionID, p.CreationID, p.Incarnation, taskSpace)
 		}
@@ -3352,10 +3351,12 @@ func interactiveShell() (string, error) {
 	return "", errors.New("这台电脑上没有 Git Bash（Git for Windows）：Claude Code 在 Windows 上也要它，装上后再试")
 }
 
-// loginShell runs a command in an interactive zsh so ~/.zshrc functions and PATH are available (loginShellProgram:
-// bash without zsh, Git Bash on Windows).
+// loginShell runs a command in the user's shell the way their terminal starts it, so the rc files' functions and PATH
+// are available (loginShellProgram, shellFlag: zsh -ic, or bash -ic; on macOS the account's own bash or zsh, -lic; Git
+// Bash on Windows).
 func loginShell(ctx context.Context, script string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, loginShellProgram(), "-ic", script)
+	shell := loginShellProgram()
+	cmd := exec.CommandContext(ctx, shell, shellFlag(shell), script)
 	cmd.Stdin = nil
 	return cmd
 }

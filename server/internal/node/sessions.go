@@ -325,6 +325,8 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 		}
 		if a.Agent == "codex" {
 			n.codexPaneControls(&s, rollout)
+		} else if a.Agent == "claude" {
+			n.claudeTerminalSpeedRow(&s, rollout)
 		}
 		if piFamily(a.Agent) {
 			n.mergePiRow(&s) // its conversation is the extension's (pi.go)
