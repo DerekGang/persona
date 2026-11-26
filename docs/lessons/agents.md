@@ -35,6 +35,9 @@
 
 ## A one-start speed must not become a resume default (#11141)
 
+- A terminal Codex speed switch uses `/model --speed=standard` to reset the speed on Codex 0.172. The native setting
+  records `default`. Confirm the switch from a new `thread_settings_applied` record because an already-running turn
+  can still write its previous speed.
 - Codex's per-start `service_tier` belongs only in the initial argv; validate it against the selected model's catalog rather than trusting Codex to refuse an unadvertised tier.
 - Claude Code fast mode needs `"fastMode": true` in the effective single `--settings` file. Give the initial command a merged copy and keep the base `claudeLaunch` spec for herdr's `resume_argv`, or an automatic resume silently inherits the billable choice. A shell function that supplies its own `--settings` cannot be merged: refuse fast mode rather than appending a fast-only file that would discard the function's credentials and model.
 - A new `session.start` field needs its own node capability: older nodes otherwise accept it and start at the launcher's speed. Faster speed on a resume or another runtime is a coded refusal before approval or launch.
@@ -381,6 +384,8 @@ may legitimately repeat an earlier answer, so retirement follows the landed stre
   Drop the reported id only when the index knows that thread under a different name, and never under a name it gave the thread before (a rename leaves the earlier line in the index, and the node keeps only the latest); a remembered pane binding is still dropped.
   Check the name of the thread herdr reported, not of the main chat a sub-Agent id was replaced with: that name says nothing about the reported thread.
   Claude panes likewise: pane bindings for Persona-started sessions live in hub's database and reload after node restart, but can be stale; `sessions/<pid>.json` takes priority.
+  Pane ids are reused too: herdr numbers its workspaces again after its server restarts, so a new tab can get the id (`wD:p1`) of a tab that closed days
+  ago, and the binding of the session that ran there comes back on every hub connection. A tab Persona opens forgets every binding of its id first (#14682).
   After changing pane identification logic, rerun verification after deployment (restart); pre- and post-restart results may differ.
 - herdr `agent.prompt` pastes, then waits about 300 ms before Enter: serialize sends to the same session, or the second screen read mistakes the first message for an input draft. Sending deduplication lives in hub Postgres (`sent_messages`):
   node's in-memory deduplication disappears on reconnect / hub restart, exactly when the App auto-retries. Full session-reading and sending verification, with per-hop timings: `docs/archive/integrations/session-verify.md`.
@@ -1445,6 +1450,9 @@ node RPC so an older node cannot silently ignore a billable setting in `session.
 
 Persona-owned Codex conversations use a separate stdio connection. Share catalog parsing across both transports and
 include the owned connection in session projection, setting routing and native notifications.
+
+The web composer keeps the tier ID through live updates and the new-conversation draft. A Fast boolean drops
+Ultrafast from the pill and loses the tier needed by the first request.
 
 ## Runtime assistant identity comes from persisted state (#4202)
 
