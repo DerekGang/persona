@@ -174,7 +174,11 @@ type PlanTask struct {
 	PartOf      string   `json:"part_of,omitempty"`
 	After       []string `json:"after,omitempty"`
 	BlockedByPR []string `json:"blocked_by_pr,omitempty"`
-	RequestGate string   `json:"request_gate,omitempty"`
+	// UnlockStage and UnlockContracts are the validated stage gate for After, kept with the plan so a saved plan
+	// retains it across a manager restart. Empty means the dependency is mirrored as todo_done.
+	UnlockStage     string   `json:"unlock_stage,omitempty"`
+	UnlockContracts []string `json:"unlock_contracts,omitempty"`
+	RequestGate     string   `json:"request_gate,omitempty"`
 	// Project: the knowledge-base project the task's todo goes in (#2581, todo_project.go), checked and kept as its slug
 	// when the plan is made; "" for none.
 	Project string `json:"project,omitempty"`

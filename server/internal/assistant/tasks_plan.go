@@ -22,12 +22,10 @@ import (
 // plan's own todo_id, the todo a started task became, is the hub's to set, and the shallower field wins in JSON.
 type planTaskIn struct {
 	PlanTask
-	TodoID          string   `json:"todo_id"`
-	WritePrefixes   []string `json:"write_prefixes,omitempty"`
-	ForceParallel   bool     `json:"force_parallel,omitempty"`
-	ChangedFiles    []string `json:"changed_files,omitempty"`
-	UnlockStage     string   `json:"unlock_stage,omitempty"`
-	UnlockContracts []string `json:"unlock_contracts,omitempty"`
+	TodoID        string   `json:"todo_id"`
+	WritePrefixes []string `json:"write_prefixes,omitempty"`
+	ForceParallel bool     `json:"force_parallel,omitempty"`
+	ChangedFiles  []string `json:"changed_files,omitempty"`
 }
 
 // toolTaskPlanFrom is task_plan from the conversation sessionID running on machine (where its attachments are).
@@ -44,7 +42,6 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 	}
 	var a struct{ Tasks []PlanTask }
 	var plannedScopes []plannedWriteScopeInput
-	var plannedUnlocks []todoStageUnlockSpec
 	lead := "" // optional initial leader assignment; omission keeps the planning lead or main
 	if scope != nil {
 		tasks, err := scope.workerTasks(args)
@@ -53,7 +50,6 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		}
 		a.Tasks = tasks
 		plannedScopes = make([]plannedWriteScopeInput, len(tasks))
-		plannedUnlocks = make([]todoStageUnlockSpec, len(tasks))
 	} else {
 		var in struct {
 			Tasks      []planTaskIn `json:"tasks"`
@@ -75,10 +71,6 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 				WritePrefixes: t.WritePrefixes,
 				ChangedFiles:  t.ChangedFiles,
 				ForceParallel: t.ForceParallel,
-			})
-			plannedUnlocks = append(plannedUnlocks, todoStageUnlockSpec{
-				stage:     t.UnlockStage,
-				contracts: t.UnlockContracts,
 			})
 		}
 	}
@@ -155,18 +147,13 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 				}
 				t.BlockedByPR = normPRs
 			}
-			if i < len(plannedUnlocks) {
-				normStage, normContracts, err := parseUnlockStageRule(plannedUnlocks[i].stage, plannedUnlocks[i].contracts)
-				if err != nil {
-					return "", fmt.Errorf("task %d: %w", i+1, err)
-				}
-				plannedUnlocks[i] = todoStageUnlockSpec{stage: normStage, contracts: normContracts}
+			t.UnlockStage, t.UnlockContracts, err = parseUnlockStageRule(t.UnlockStage, t.UnlockContracts)
+			if err != nil {
+				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
 		} else {
 			t.BlockedByPR = nil
-			if i < len(plannedUnlocks) {
-				plannedUnlocks[i] = todoStageUnlockSpec{}
-			}
+			t.UnlockStage, t.UnlockContracts = "", nil
 		}
 		if err := t.checkRole(scope != nil); err != nil {
 			return "", fmt.Errorf("task %d: %w", i+1, err)
@@ -478,9 +465,6 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		CreatedAt: now, UpdatedAt: now}
 	if err := s.savePlan(ctx, p); err != nil {
 		return "", err
-	}
-	if s.settings(ctx).todosV2On() {
-		s.rememberPlanUnlockRules(p.ID, plannedUnlocks)
 	}
 	// The plan goes in the item's body too: a client that missed the task_plan event (or raced it) still draws the
 	// card from the conversation itself.
