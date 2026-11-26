@@ -169,7 +169,7 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 		headHash = res.Head.Hash
 	}
 	baseAllowed := func(hash string) bool {
-		return hash == "" || hash == headHash || byHash[hash].Hash != ""
+		return hash == "" || strings.HasPrefix(headHash, hash) || byHash[hash].Hash != ""
 	}
 	resolve := func(hash string) (checkpointRef, bool) {
 		if r, ok := byHash[hash]; ok {
@@ -204,12 +204,15 @@ func reviewTurn(ctx context.Context, root string, p proto.GitReviewRequest, res 
 		if p.Base != "" {
 			baseRef, baseIsCheckpoint = resolve(p.Base)
 		}
-		if p.Base != "" && !p.Live && !baseAllowed(p.Base) && !baseIsCheckpoint && p.Base != targetParent {
+		if p.Base != "" && !p.Live && !baseAllowed(p.Base) && !baseIsCheckpoint &&
+			(targetParent == "" || !strings.HasPrefix(targetParent, p.Base)) {
 			return "", "", reviewErr(proto.CodeBadBase, "not a checkpoint of this session: "+p.Base)
 		}
 		baseHash := p.Base
 		if baseIsCheckpoint {
 			baseHash = baseRef.Hash
+		} else if p.Base != "" && targetParent != "" && strings.HasPrefix(targetParent, p.Base) {
+			baseHash = targetParent
 		}
 		if baseHash == "" && p.Target != "" {
 			if previous, ok := checkpointBefore(refs, targetRef.Turn); ok {

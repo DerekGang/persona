@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseCommentBlock } from "./comments";
+import { codeQuote, commentBlock, parseCommentBlock } from "./comments";
 import { splitQuotes, parseQuotes } from "./drafts";
 import {
   orderedComments, pendingComment, pendingReview, pendingThreads, reviewDiff, reviewItems, reviewMessage, reviewURL, setPendingReview, type GitReview,
@@ -73,6 +73,13 @@ describe("a comment of the review", () => {
     expect(reviewDiff({ scope: "turn", base: { hash: "0123456789", short: "0123456" }, target: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "turn", base: "0123456", baseHash: "0123456789", target: "89abcdef00" });
     expect(reviewDiff({ scope: "turn", base: { empty: true }, target: { hash: "89abcdef00", short: "89abcde" } })).toEqual({ kind: "review", scope: "turn", base: "89abcde", emptyBase: true, target: "89abcdef00" });
     expect(reviewDiff({ scope: "turn", base: { hash: "0123456789", short: "0123456" }, target: { working: true } })).toEqual({ kind: "review", scope: "turn", base: "0123456", baseHash: "0123456789", live: true });
+  });
+
+  it("round-trips a live review of an empty base", () => {
+    const empty = reviewDiff({ scope: "turn", base: { empty: true }, target: { working: true } });
+    expect(empty).toEqual({ kind: "review", scope: "turn", base: "", emptyBase: true, live: true });
+    const q = codeQuote({ file: "a.ts", path: "a.ts", from: 1, to: 1, lines: ["+x"], lang: "diff", diff: empty });
+    expect(parseCommentBlock(commentBlock(q, 1))?.comment?.spot?.diff).toEqual(empty);
   });
 
   it("carries the diff's rows of its lines, the removed ones between them too", () => {

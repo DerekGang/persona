@@ -60,6 +60,7 @@ describe("line ranges", () => {
     expect(diffLabel({ kind: "staged" })).toBe("staged");
     expect(diffLabel({ kind: "unstaged" })).toBe("unstaged");
     expect(diffLabel({ kind: "commit", sha: "0123456789abcdef" })).toBe("commit 01234567");
+    expect(diffLabel({ kind: "review", scope: "turn", base: "", emptyBase: true, live: true })).toBe("turn ..live");
     expect(relativeTo("/work/app/", "/work/app/src/a.ts")).toBe("src/a.ts");
     expect(relativeTo("/work/app", "/etc/hosts")).toBe("/etc/hosts");
     expect(relativeTo(undefined, "/etc/hosts")).toBe("/etc/hosts");

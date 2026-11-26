@@ -140,7 +140,10 @@ export function diffLabel(d: DiffScope): string {
     if (d.scope === "branch") return `branch since ${d.base}`;
     if (d.scope === "turn") {
       const base = d.baseHash ?? d.base;
-      if (d.emptyBase) return d.target ? `turn ..${d.target}` : "turn";
+      if (d.emptyBase) {
+        if (d.target) return `turn ..${d.target}`;
+        return d.live ? "turn ..live" : "turn";
+      }
       if (d.live && !d.target) return `turn ${base}..live`;
       return d.target ? `turn ${base}..${d.target}` : `turn ${base}`;
     }
@@ -163,6 +166,7 @@ export function parseDiffLabel(v: string): DiffScope | null {
   }
   const liveTurn = /^turn ([0-9a-f]+)\.\.live$/.exec(value);
   if (liveTurn) return { kind: "review", scope: "turn", base: liveTurn[1], baseHash: liveTurn[1], live: true };
+  if (value === "turn ..live") return { kind: "review", scope: "turn", base: "", emptyBase: true, live: true };
   const turn = /^turn (?:([0-9a-f]*)\.\.)?([0-9a-f]+)$/.exec(value);
   if (turn) {
     if (turn[1] !== undefined) {

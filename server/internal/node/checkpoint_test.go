@@ -292,6 +292,16 @@ func TestCheckpointFirstTurnComparesWithHead(t *testing.T) {
 	if len(pinned.Files) != 1 || pinned.Files[0].Path != "a.txt" {
 		t.Fatalf("pinned first turn review: %+v", pathsOf(pinned))
 	}
+	shortBase, err := r.node.gitReview(context.Background(), proto.GitReviewRequest{
+		Cwd: r.dir, Scope: proto.ReviewTurn, Session: "session-1",
+		Base: r.git("rev-parse", "--short", got.Base.Hash), Target: got.Target.Hash, Paths: []string{"a.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shortBase.Base.Hash != got.Base.Hash || len(shortBase.Files) != 1 || shortBase.Files[0].Path != "a.txt" {
+		t.Fatalf("pinned first turn review with an abbreviated base: %+v %+v", shortBase, pathsOf(shortBase))
+	}
 }
 
 func TestCheckpointFirstTurnBeforeAnyCommit(t *testing.T) {
