@@ -425,12 +425,14 @@ fun buildFlatAgentList(
                 val members = treeRows.filter { it.session.machineId == machine.id }
                 if (members.isEmpty()) return@mapNotNull null
                 val scopeMembers = scopeRows.filter { it.session.machineId == machine.id }
-                val nested = buildFlatAgentList(scopeMembers, machines = listOf(machine), pins = pins, mutes = mutes,
+                val nested = buildFlatAgentList(members, machines = listOf(machine), pins = pins, mutes = mutes,
                     settings = settings.copy(grouping = AgentGrouping.Space))
+                val projectFolders = projectFolders(agentSpaces(scopeMembers, byProject = true), machines)
                 val machineFolded = "machine/${machine.id}" in settings.folded
                 result += nested.groups.filterNot { it.id == "pinned" }.map { group ->
                     val folded = group.folded || group.id in settings.folded
-                    group.copy(folded = folded, visibleRows = if (machineFolded || folded) emptyList() else group.visibleRows)
+                    group.copy(folded = folded, visibleRows = if (machineFolded || folded) emptyList() else group.visibleRows,
+                        projectFolder = projectFolders[group.id] ?: group.projectFolder)
                 }
                 val spaces = agentSpaces(members)
                 AgentMachineGroup(machine, nested.groups.filterNot { it.id == "pinned" }.map { it.id }, members.count { !it.isNestedSubtask }, spaces.size,
