@@ -8,8 +8,10 @@ import org.junit.Test
 import persona.core.contracts.generated.ExtensionSceneBox
 import persona.core.contracts.generated.ExtensionSceneCamera
 import persona.core.contracts.generated.ExtensionSceneCylinder
+import persona.core.contracts.generated.ExtensionSceneMaterial
 import persona.core.contracts.generated.ExtensionScenePrism
 import persona.core.contracts.generated.ExtensionSceneShape
+import kotlin.math.abs
 
 class ExtensionSceneGeometryTest {
     private val box = ExtensionSceneBox(
@@ -64,6 +66,56 @@ class ExtensionSceneGeometryTest {
         // A convex quad yields exactly two triangles.
         assertEquals(2, triangulateSimplePolygon(listOf(
             ScenePoint(-1.0, -1.0), ScenePoint(1.0, -1.0), ScenePoint(1.0, 1.0), ScenePoint(-1.0, 1.0))).size)
+    }
+
+    @Test fun rotatedTileCapsShareOneYawedSurfacePattern() {
+        val mesh = requireNotNull(SceneMesh.from(listOf(box.copy(
+            size = listOf(4.0, 2.0),
+            yaw = 90.0,
+            material = ExtensionSceneMaterial.TILE,
+        ))))
+        val caps = mesh.faces.filter { it.normal.z > 0.5 }
+        assertEquals(2, caps.size)
+        val pattern = requireNotNull(caps.first().surfacePattern)
+        assertTrue(caps.all { it.surfacePattern == pattern })
+        assertEquals(-2.0, pattern.minX, 1e-8)
+        assertEquals(2.0, pattern.maxX, 1e-8)
+        assertEquals(-1.0, pattern.minY, 1e-8)
+        assertEquals(1.0, pattern.maxY, 1e-8)
+        // A 90° box turns the pattern's local x axis onto world +y and local y onto world -x.
+        assertEquals(0.0, pattern.xAxis.x, 1e-8)
+        assertEquals(1.0, pattern.xAxis.y, 1e-8)
+        assertEquals(-1.0, pattern.yAxis.x, 1e-8)
+        assertEquals(0.0, pattern.yAxis.y, 1e-8)
+        val seamX = repeatedSeams(pattern.minX, pattern.maxX, 0.42).first()
+        val start = pattern.at(seamX, pattern.minY, 1.0)
+        val end = pattern.at(seamX, pattern.maxY, 1.0)
+        assertTrue(abs(end.x - start.x) > 1.0)
+        assertEquals(0.0, end.y - start.y, 1e-8)
+    }
+
+    @Test fun earClippedTileCapsShareTheFullFootprintSurfacePattern() {
+        val outline = listOf(listOf(0.0, 0.0), listOf(2.0, 0.0), listOf(2.0, 1.0),
+            listOf(1.0, 1.0), listOf(1.0, 2.0), listOf(0.0, 2.0))
+        val mesh = requireNotNull(SceneMesh.from(listOf(ExtensionScenePrism(
+            points = outline,
+            bottom = 0.0,
+            top = 0.08,
+            material = ExtensionSceneMaterial.TILE,
+        ))))
+        val caps = mesh.faces.filter { it.normal.z > 0.5 }
+        assertEquals(4, caps.size)
+        val pattern = requireNotNull(caps.first().surfacePattern)
+        assertTrue(caps.all { it.surfacePattern == pattern })
+        assertEquals(ScenePoint(0.0, 0.0), pattern.origin)
+        assertEquals(0.0, pattern.minX, 1e-8)
+        assertEquals(2.0, pattern.maxX, 1e-8)
+        assertEquals(0.0, pattern.minY, 1e-8)
+        assertEquals(2.0, pattern.maxY, 1e-8)
+        // Every cap triangle clips the same full-footprint seam: it is not restarted at that triangle's own bbox.
+        val seamX = repeatedSeams(pattern.minX, pattern.maxX, 0.42).first()
+        assertEquals(SceneVector(seamX, 0.0, 0.08), pattern.at(seamX, pattern.minY, 0.08))
+        assertEquals(SceneVector(seamX, 2.0, 0.08), pattern.at(seamX, pattern.maxY, 0.08))
     }
 
     @Test fun negligibleRoundsStaySquareButVisibleRoundsAddVertices() {

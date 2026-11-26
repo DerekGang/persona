@@ -26,6 +26,59 @@ internal data class ScenePoint(val x: Double, val y: Double) {
     }
 }
 
+/**
+ * A material pattern's axes and bounds for one solid. Cap triangles share it so their seams line up after ear
+ * clipping; a box keeps the axes of its own yaw instead of falling back to world x/y.
+ */
+internal data class SceneSurfacePattern(
+    val origin: ScenePoint,
+    val xAxis: ScenePoint,
+    val yAxis: ScenePoint,
+    val minX: Double,
+    val maxX: Double,
+    val minY: Double,
+    val maxY: Double,
+) {
+    fun at(x: Double, y: Double, z: Double) = SceneVector(
+        origin.x + xAxis.x * x + yAxis.x * y,
+        origin.y + xAxis.y * x + yAxis.y * y,
+        z,
+    )
+
+    companion object {
+        fun box(center: ScenePoint, halfWidth: Double, halfDepth: Double, yawDegrees: Double): SceneSurfacePattern {
+            val yaw = yawDegrees.radians()
+            val cos = cos(yaw)
+            val sin = sin(yaw)
+            return SceneSurfacePattern(
+                origin = center,
+                xAxis = ScenePoint(cos, sin),
+                yAxis = ScenePoint(-sin, cos),
+                minX = -halfWidth,
+                maxX = halfWidth,
+                minY = -halfDepth,
+                maxY = halfDepth,
+            )
+        }
+
+        fun worldFootprint(points: List<ScenePoint>): SceneSurfacePattern {
+            val minX = points.minOf { it.x }
+            val maxX = points.maxOf { it.x }
+            val minY = points.minOf { it.y }
+            val maxY = points.maxOf { it.y }
+            return SceneSurfacePattern(
+                origin = ScenePoint(minX, minY),
+                xAxis = ScenePoint(1.0, 0.0),
+                yAxis = ScenePoint(0.0, 1.0),
+                minX = 0.0,
+                maxX = maxX - minX,
+                minY = 0.0,
+                maxY = maxY - minY,
+            )
+        }
+    }
+}
+
 internal data class SceneVector(val x: Double, val y: Double, val z: Double) {
     operator fun minus(other: SceneVector) = SceneVector(x - other.x, y - other.y, z - other.z)
     fun dot(other: SceneVector) = x * other.x + y * other.y + z * other.z
@@ -105,6 +158,7 @@ internal data class SceneFace(
     val normal: SceneVector,
     val color: Int,
     val material: String,
+    val surfacePattern: SceneSurfacePattern? = null,
 )
 
 internal data class SceneMesh(val vertices: List<SceneVector>, val faces: List<SceneFace>, val bounds: SceneBounds) {
@@ -131,6 +185,7 @@ private data class SceneSolid(
     val top: Double,
     val color: Int,
     val material: String,
+    val surfacePattern: SceneSurfacePattern,
 ) {
     fun appendTo(vertices: MutableList<SceneVector>, faces: MutableList<SceneFace>) {
         val first = vertices.size
@@ -138,17 +193,21 @@ private data class SceneSolid(
         vertices += footprint.map { it.atHeight(bottom) }
         vertices += footprint.map { it.atHeight(top) }
 
-        fun add(indices: List<Int>, normal: SceneVector) {
+        fun add(indices: List<Int>, normal: SceneVector, surfacePattern: SceneSurfacePattern? = null) {
             val points = indices.map(vertices::get)
             val center = SceneVector(points.map { it.x }.average(), points.map { it.y }.average(), points.map { it.z }.average())
-            faces += SceneFace(indices, center, normal, color, material)
+            faces += SceneFace(indices, center, normal, color, material, surfacePattern)
         }
         // Triangulate simple (possibly concave) caps instead of emitting one perimeter n-gon: the renderer fills each
         // triangle exactly, so an L/U-shaped prism keeps its notch rather than letting the closing chord fill it (P2).
         val triangles = triangulateSimplePolygon(footprint)
         for ((a, b, c) in triangles) {
             add(listOf(first + c, first + b, first + a), SceneVector(0.0, 0.0, -1.0))
-            add(listOf(first + count + a, first + count + b, first + count + c), SceneVector(0.0, 0.0, 1.0))
+            add(
+                listOf(first + count + a, first + count + b, first + count + c),
+                SceneVector(0.0, 0.0, 1.0),
+                surfacePattern,
+            )
         }
         for (i in footprint.indices) {
             val j = (i + 1) % count
@@ -162,13 +221,27 @@ private data class SceneSolid(
 
     companion object {
         fun from(shape: ExtensionSceneShape): SceneSolid? = when (shape) {
-            is ExtensionSceneBox -> solid(box(shape), shape.bottom, shape.top, shape.color, shape.material)
+            is ExtensionSceneBox -> solid(
+                box(shape),
+                shape.bottom,
+                shape.top,
+                shape.color,
+                shape.material,
+                boxSurface(shape),
+            )
             is ExtensionSceneCylinder -> solid(circle(shape), shape.bottom, shape.top, shape.color, shape.material)
             is ExtensionScenePrism -> solid(polygon(shape), shape.bottom, shape.top, shape.color, shape.material)
             is ExtensionSceneShape.Unknown -> null
         }
 
-        private fun solid(points: List<ScenePoint>, bottom: Double, top: Double, color: String?, material: String?): SceneSolid? {
+        private fun solid(
+            points: List<ScenePoint>,
+            bottom: Double,
+            top: Double,
+            color: String?,
+            material: String?,
+            surfacePattern: SceneSurfacePattern? = null,
+        ): SceneSolid? {
             if (points.size < 3 || !bottom.isFinite() || !top.isFinite() || top - bottom < 0.004999) return null
             val resolved = material?.takeIf { it in ExtensionSceneMaterial.ALL } ?: ExtensionSceneMaterial.MATTE
             val defaultColor = when (resolved) {
@@ -180,7 +253,7 @@ private data class SceneSolid(
                 else -> 0xD4CEC5
             }
             val rgb = color?.takeIf { it.length == 7 && it.startsWith("#") }?.substring(1)?.toIntOrNull(16) ?: defaultColor
-            return SceneSolid(points, bottom, top, rgb, resolved)
+            return SceneSolid(points, bottom, top, rgb, resolved, surfacePattern ?: SceneSurfacePattern.worldFootprint(points))
         }
 
         private fun box(shape: ExtensionSceneBox): List<ScenePoint> {
@@ -206,6 +279,14 @@ private data class SceneSolid(
             return outline.map { point ->
                 ScenePoint(center.x + point.x * cos(yaw) - point.y * sin(yaw), center.y + point.x * sin(yaw) + point.y * cos(yaw))
             }
+        }
+
+        private fun boxSurface(shape: ExtensionSceneBox): SceneSurfacePattern? {
+            val center = ScenePoint.from(shape.center) ?: return null
+            val size = ScenePoint.from(shape.size) ?: return null
+            if (size.x <= 0.0 || size.y <= 0.0) return null
+            val yaw = shape.yaw?.takeIf(Double::isFinite) ?: 0.0
+            return SceneSurfacePattern.box(center, size.x / 2, size.y / 2, yaw)
         }
 
         private fun circle(shape: ExtensionSceneCylinder): List<ScenePoint> {

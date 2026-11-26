@@ -66,13 +66,12 @@ internal fun DrawScope.drawExtensionScene(
         if (face.material == ExtensionSceneMaterial.GLASS) {
             drawPath(path, color.copy(alpha = 0.75f), style = Stroke(edgeWidth))
         } else if (face.normal.z > 0.5) {
-            drawSurfacePattern(mesh, face, projection, path, color, edgeWidth)
+            drawSurfacePattern(face, projection, path, color, edgeWidth)
         }
     }
 }
 
 private fun DrawScope.drawSurfacePattern(
-    mesh: SceneMesh,
     face: SceneFace,
     projection: SceneProjection,
     path: Path,
@@ -84,23 +83,19 @@ private fun DrawScope.drawSurfacePattern(
         ExtensionSceneMaterial.WOOD -> 0.16
         else -> return
     }
-    val corners = face.vertices.map(mesh.vertices::get)
-    val minX = corners.minOf { it.x }
-    val maxX = corners.maxOf { it.x }
-    val minY = corners.minOf { it.y }
-    val maxY = corners.maxOf { it.y }
+    val pattern = face.surfacePattern ?: return
     val z = face.center.z
     val seam = Color(color.red * 0.63f, color.green * 0.63f, color.blue * 0.63f, 0.34f)
     clipPath(path) {
         if (face.material == ExtensionSceneMaterial.TILE) {
-            for (x in repeatedSeams(minX, maxX, step)) {
-                drawLine(seam, projection.position(SceneVector(x, minY, z)).offset(),
-                    projection.position(SceneVector(x, maxY, z)).offset(), edgeWidth)
+            for (x in repeatedSeams(pattern.minX, pattern.maxX, step)) {
+                drawLine(seam, projection.position(pattern.at(x, pattern.minY, z)).offset(),
+                    projection.position(pattern.at(x, pattern.maxY, z)).offset(), edgeWidth)
             }
         }
-        for (y in repeatedSeams(minY, maxY, step)) {
-            drawLine(seam, projection.position(SceneVector(minX, y, z)).offset(),
-                projection.position(SceneVector(maxX, y, z)).offset(), edgeWidth)
+        for (y in repeatedSeams(pattern.minY, pattern.maxY, step)) {
+            drawLine(seam, projection.position(pattern.at(pattern.minX, y, z)).offset(),
+                projection.position(pattern.at(pattern.maxX, y, z)).offset(), edgeWidth)
         }
     }
 }
@@ -109,7 +104,7 @@ internal fun repeatedSeams(minimum: Double, maximum: Double, spacing: Double): S
     val span = maximum - minimum
     if (!span.isFinite() || span <= 0.0) return emptySequence()
     val step = spacing.coerceAtLeast(span / 64)
-    // Anchor to this face's own minimum rather than world zero: separate floor prisms with one material then keep a
+    // Anchor to this solid's own minimum rather than world zero: separate floor prisms with one material then keep a
     // shape-local pattern, and a shape narrower than the fixed step still receives seams (review P2).
     val first = minimum + step
     return generateSequence(first) { it + step }.take(64).takeWhile { it <= maximum + 1e-9 }
