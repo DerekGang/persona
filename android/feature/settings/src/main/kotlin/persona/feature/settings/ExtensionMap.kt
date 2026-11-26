@@ -86,10 +86,12 @@ internal fun mapFrame(points: List<ExtensionMapCoordinate>, viewport: ExtensionM
 internal fun mapExternalLink(url: String): String? = runCatching { URI(url) }.getOrNull()
     ?.takeIf { it.scheme == "https" && !it.host.isNullOrBlank() && it.rawUserInfo == null }?.toASCIIString()
 
-private fun mapAspect(aspect: String?) = when (aspect) {
+internal fun mapAspect(aspect: String?) = when (aspect) {
     "square" -> 1f
-    "tall" -> 3f / 4f
-    else -> 16f / 9f
+    "landscape" -> 4f / 3f
+    "wide" -> 16f / 9f
+    "portrait" -> 3f / 4f
+    else -> 4f / 3f
 }
 
 @Composable
@@ -110,16 +112,21 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
     var stopID by remember(item.key) { mutableStateOf<String?>(null) }
     var scale by remember(item.key) { mutableStateOf(1f) }
     var pan by remember(item.key) { mutableStateOf(Offset.Zero) }
-    // A keyless map is reused by lazy lists and live updates. When its routes are replaced by an unrelated set, the
-    // previous full-screen view, route choice, stop, zoom and pan do not belong to the new map: start from its declared
-    // camera again. A map that keeps or adds its routes (a live update) keeps the owner's interaction (review P2).
+    // A keyless map is reused by lazy lists and live updates. When its routes or markers are replaced, including by an
+    // empty set, the previous full-screen view, route choice, stop, zoom and pan do not belong to the new map: start
+    // from its declared camera again. A map that keeps or adds IDs (a live update) keeps the owner's interaction.
     val routeIDs = routes.map { it.id }
     val markerIDs = markers.map { it.id }
     var priorRouteIDs by remember(item.key) { mutableStateOf<List<String>>(emptyList()) }
+    var priorMarkerIDs by remember(item.key) { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(item.key, routeIDs, markerIDs) {
-        val replaced = priorRouteIDs.isNotEmpty() && routeIDs.isNotEmpty() && routeIDs.none { it in priorRouteIDs }
-        val chosenGone = chosenRouteID != null && routeIDs.isNotEmpty() && chosenRouteID !in routeIDs
-        val stopGone = stopID != null && markerIDs.isNotEmpty() && stopID !in markerIDs
+        val routesReplaced = priorRouteIDs.isNotEmpty() &&
+            (routeIDs.isEmpty() || routeIDs.none { it in priorRouteIDs })
+        val markersReplaced = priorMarkerIDs.isNotEmpty() &&
+            (markerIDs.isEmpty() || markerIDs.none { it in priorMarkerIDs })
+        val replaced = routesReplaced || markersReplaced
+        val chosenGone = chosenRouteID != null && chosenRouteID !in routeIDs
+        val stopGone = stopID != null && stopID !in markerIDs
         if (replaced || chosenGone || stopGone) {
             if (replaced) expanded = false
             chosenRouteID = null
@@ -128,6 +135,7 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
             pan = Offset.Zero
         }
         priorRouteIDs = routeIDs
+        priorMarkerIDs = markerIDs
     }
     val selectedRoute = routes.firstOrNull { it.id == chosenRouteID } ?: routes.firstOrNull { it.selected == true } ?: routes.firstOrNull()
     val routeID = selectedRoute?.id
