@@ -45,11 +45,11 @@ import (
 // Antigravity Assistant run_command command-gate routing, unclipped command & per-call Cwd forwarding, fail-closed reconnect, tracks Assistant detection, and Assistant allow_always bypass guard (#16202) add 511 B (278,347 B).
 // After preserving Antigravity modes (#16300), the packages measured 278,334 B. Filtering botmux marker
 // lines before shortening runtime previews adds 549 B (#16310).
-// Claude Code plugin 0.3.1 reports classic hook pass-over and disables permission bridging under managed settings (#15546), bringing the total to 280,252 B.
-// Antigravity detached pending approval turn cancellation (including sibling-ask withdrawal and stale-turn/racing-ask/refusal guards) and explicit deny-with-note refusal follow-up add 436 B (280,688 B).
-// Raise the budget only for code a runtime needs, never to embed the packages raw again.
+// Claude Code plugin 0.3.1 reports classic hook pass-over and disables permission bridging under managed settings
+// (#15546), adding 934 B to main's 280,046 B. Raise the budget only for code a runtime needs, never to embed the
+// packages raw again.
 func TestDistBudget(t *testing.T) {
-	const budget = 280_688
+	const budget = 280_980
 	_, out := generateIntegrations(t)
 	entries, err := os.ReadDir(out)
 	if err != nil {
