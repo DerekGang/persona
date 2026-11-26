@@ -163,15 +163,18 @@ func TestExtensionTargetMismatchStopsBeforeHub(t *testing.T) {
 	srv, requests := targetFakeHub(t)
 	home := t.TempDir()
 	writeTargetHub(t, home, strings.TrimPrefix(srv.URL, "http://"))
+	otherHome := t.TempDir()
+	t.Setenv("HOME", otherHome)
+	otherState := filepath.Join(otherHome, ".persona")
+	writeTargetHub(t, otherState, strings.TrimPrefix(srv.URL, "http://"))
 	t.Setenv("PERSONA_HOME", home)
-	other := t.TempDir()
 
 	for _, tc := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{"home", []string{"install", "dir:/tmp/example", "--yes", "--expect-home", other}, other},
+		{"home", []string{"install", "dir:/tmp/example", "--yes", "--expect-home", otherState}, otherState},
 		{"hub", []string{"install", "dir:/tmp/example", "--yes", "--expect-hub", "127.0.0.1:1"}, "127.0.0.1:1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
