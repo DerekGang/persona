@@ -206,14 +206,15 @@ on an app-server yet gets its messages typed into its box, and since Codex 0.169
 choice as arguments, `/model <model> --reasoning=<level>` (either part may be left out), and applies it to this session only, from the next turn,
 mid-turn too; `config.toml` stays as it is (`node/codex_terminal_modes.go`).
 
-- **Row**: `capabilities.model: true`, and `efforts` the levels of the model the rollout last ran: `supported_reasoning_levels` in the
-  `models_cache.json` of the Codex home the rollout is in, Codex's whole list for a model the cache does not name, none for a model that takes none.
-  Only when the session has a rollout and the running Codex is 0.169 or later (#13290): the node reads the pane process's executable version first
-  (`<exe> --version`, cached by executable path and modification time) and falls back to the rollout's first `session_meta.cli_version` when the
-  pane process cannot be read (another user, a remote pane, or a failing version check). If neither reports 0.169 or later, the row omits the
-  controls and `session.modes` refuses with `modes_codex_version`, with nothing typed. So a pre-0.169 session resumed by 0.169 or later offers
-  model and effort and switches them, and a newer session resumed by a pre-0.169 binary is refused safely without opening its picker. Never on
-  sub-Agents, botmux panes, TRAE CLI, or a session whose owner is in doubt.
+- **Row**: `capabilities.model: true`, plus the current model, effort and speed. Before the rollout records its settings, the node uses the launch
+  selections, launcher arguments and Codex configuration from the home that owns the rollout. The model catalog supplies defaults when available.
+  That home's `models_cache.json` gives the model's effort levels and speed choices. The row uses Codex's whole effort list for an unlisted model
+  and an empty list for a model with no effort choices. Speed choices require tiers in the catalog.
+- **Version check** uses the running Codex (#13290). The node requires a rollout and reads the pane process's executable version
+  (`<exe> --version`, cached by executable path and modification time). If that version is unavailable, it uses the rollout's first
+  `session_meta.cli_version`. The effective version must be 0.169 or later for the row to offer controls and for settings requests to type
+  anything. An older session resumed by a supported binary gains the controls. A supported session resumed by an older binary loses them.
+  Sub-Agents, botmux panes, TRAE CLI and sessions with uncertain ownership are excluded.
 - The phone reads the named launcher's catalog when the session reports one. A manually opened Codex pane with no known launcher
   gets the machine's Codex catalog. A pick changes the running session's model within its current provider. The gateway determines which
   model IDs it will serve.
@@ -223,9 +224,11 @@ mid-turn too; `config.toml` stays as it is (`node/codex_terminal_modes.go`).
   as made only when the rollout records it: Codex writes `thread_settings_applied` with the thread's `model` and `reasoning_effort` as soon as it
   applies them, between turns and mid-turn, and again at each turn's start. The transcript reader takes that event as it takes a `turn_context`,
   so the row shows the new values at once.
+- **Speed** uses its own request. The node types `/model --speed=<tier>` with `standard` for Standard and `fast` for Fast. It reports success after
+  a new rollout settings event confirms the requested tier. The request carries no model or effort change.
 - **Refusals** (`session.modes` codes, worded in en / zh-Hans / ja): a permission mode, as on the app-server route; a level the model does not take;
-  `modes_codex_version` (the running Codex — or the rollout's `cli_version` when the process cannot be read — is older than 0.169 or unknown); `modes_codex_no_rollout` (no rollout yet: a new Codex has none until its first
-  message); `modes_codex_refused` with Codex's own words (a model or level it does not have, Reserve, an unknown argument, `/model` disabled
+  `modes_codex_version` (the effective version is older than 0.169 or unknown); `modes_codex_no_rollout` (no rollout yet);
+  `modes_codex_refused` with Codex's own words (a model or level it does not have, Reserve, an unknown argument, `/model` disabled
   while a task runs; "still starting" is typed once more after 2 seconds, and a second "still starting" is passed on);
   `modes_codex_unconfirmed` (`delivered: "unknown"`) when the rollout does not show the change within 15 seconds. Nothing is typed again after
   it. Codex's words count only at the start of a screen line that is new since the typing (one more copy than before counts, as Codex prints a
@@ -445,9 +448,12 @@ The entry point is the same as Claude's (machine, directory, launcher); subseque
   (an existing same-named shell variable wins; these words are not shell-expanded, so `$HOME` and `~` remain literal and cannot substitute values). pi's herdr-resume command `personad tab-start` shares this code without setting `HERDR_AGENT`.
 - **Match this request**: startup is synchronous. The node waits for the Codex thread to appear before replying, and returns that thread's session, so the App opens the actual Agents entry,
   not a separate "Starting" placeholder later replaced by another. Match a rollout in this directory started after launch (`session_meta` timestamp) whose first user message exactly matches what was sent.
-  During this wait `codexStarting` reserves the pane for this explicit start. Each lookup includes newly discovered Codex homes
-  and checks the pane's observed home first. The start claims the public ID from the matched rollout's home and native thread ID,
-  then uses that same ID in its reply and pane binding (#13737).
+  During this wait `codexStarting` reserves the pane for this explicit start. Discovery leaves the pane for the start to identify.
+  The new tab first forgets every binding of its pane id, the node's and the pane an older session's record keeps (`forgetPane`, for every start's new
+  tab): herdr numbers its workspaces again after its server restarts, so the id can be a closed tab's, and that session's binding, which the hub hands
+  back, was taken for the pane's session until the thread was known. It was listed as this Codex, then left behind as an extra offline Codex row (#14682).
+  Each lookup includes newly discovered Codex homes and checks the pane's observed home first. The start claims the public ID
+  from the matched rollout's home and native thread ID, then uses that same ID in its reply and pane binding (#13737).
   Answer Codex's dialogs according to the user's intent: trust the directory (the user selected it), skip update prompts.
   The screen is read as `visible` (the blank rows under it left out): 0.167 draws its trust dialog from the top of the pane, and the last 40 `recent` rows of a 51-row pane were all blank (#2351).
   The trust dialog is known by its question asking about trust, the option by what it says ("Trust and continue", "Yes, continue"), not by its number or the other option
@@ -457,6 +463,7 @@ The entry point is the same as Claude's (machine, directory, launcher); subseque
 - **No match**: the node waits at most 60 seconds (hub 100 seconds, App 110 seconds), then reports "Codex has opened in a new tab on the computer, but its session was not identified within 60 seconds…",
   followed by the last screen lines of that tab (falling back to the visible screen when the bottom rows are blank). If the launcher cannot run (command not found), fail as soon as a `personad codex-start:` line appears, without waiting the full timeout. codex-start's notes that it goes on after (the agent sandbox not wrapping the start) say `personad codex-start (note):` instead, so the Codex after them is not taken for a failure.
   If the terminal still reports Codex running, the error carries `agent_start_stalled`: the hub neither counts it as a broken launcher nor retries or reroutes the task automatically.
+  **Not signed in**: Codex shows its sign-in screen in place of its input box when it has no login on that computer, and no wait gets past it. A start that sees that screen (with or without a first message) fails at the next look, presses no key on it, and answers `codex_not_logged_in` with the screen's last lines (`codexSignInScreen`, `codexNotLoggedIn`). The screen is known by a "Sign in with …" choice under the cursor ("Sign in with ChatGPT", "Sign in with Device Code"), not by its numbers or the other choices ("Provide your own API key" in older versions, "Sign in another way" in newer ones), and never while the input box is drawn. The hub words it in the user's language, naming the computer and the fix (run `codex login` in a terminal there), and launcher health records it as `auth` from its code, never as a stalled start (`docs/server/launcher-health.md`). The new tab is closed as below; if closing fails, the error keeps `codex_not_logged_in` and adds the cleanup's words.
   Only after this wait returns a failure (including cancellation), the node closes the new pane to stop a Codex still waiting on a screen from later executing its queued prompt without a linked task.
   If that pane explicitly identifies a fresh thread, or its unique Codex writer holds the fresh rollout, cleanup also asks Codex to archive that thread natively after the pane closes (#11145). This removes an already-published orphan from the Agent list while retaining its transcript. A directory, title or matching first line never authorizes archive; adopted panes remain untouched. Native archive failure is retained with the failed-pane cleanup for retry.
   This uses the terminal's existing close operation instead of keeping a background start waiting indefinitely for a thread. The last screen lines remain in the error.
@@ -496,6 +503,7 @@ and answers with a **waiting row** for the pane (`node/codex_waiting.go`).
 - **The waiting row**: its id is the node's own: a UUID whose first group is `c0de0000`, which no Codex thread id (a UUIDv7) or Claude session id takes. It carries `awaiting_first_message: true`,
   `agent: codex`, the pane and tab, `status: idle` whatever herdr says (Codex starting its MCP servers reads as working, then done), or `blocked` while a dialog holds the pane.
   Its capabilities are read, send and terminal. Its conversation is empty. Modes, the queue and forking are refused until the thread exists, and it has no history, archive or resume.
+  Web follows the replacement Codex row on the same computer and pane from either the compact session list or the full session list, then reads its complete settings.
   The node binds the pane to the row's id. The hub stores and returns that binding, so a restarted node knows the row again from the id's shape and its record.
   A Codex started by hand in a herdr or Herdr App tab uses the same row. Its title is the tab's label, with the directory name as a fallback. The row's time is when Persona first saw that pane.
 - **Attaching the thread, never by directory**: the node looks every second while a row waits. It scans the Codex processes only when a new thread appeared in the row's directory or herdr or the title named one, and every 15 seconds otherwise.
@@ -692,6 +700,8 @@ Two things Claude Code sessions have are missing here. Persona installs no Codex
 In Agents you can see live state, send messages, open the terminal, and close sessions. Existing sessions keep their stored agent identifier.
 The node integration (`server/internal/node/traex.go`) shares rollout parsing with Codex in `transcript/codex.go`.
 
+- **Model selection**: New Agent lists the models with selectable configuration names from the computer's `traex models --json`.
+  An explicit choice is passed as `--model` on a fresh start; Default leaves the CLI's own model preference in effect.
 - **herdr does not recognize it**: TRAE CLI panes are ordinary herdr panes (`agent_status: unknown`, absent from `agent list`); herdr has no custom-Agent configuration either.
   The node finds them itself: `~/.trae/cli/thread-writer-locks/<session id>.owner.json` records the pid writing the session. That pid's environment contains herdr's
   `HERDR_PANE_ID` (Linux reads `/proc/<pid>/environ`, macOS uses `ps -E`), giving an exact pane → pid → session mapping without directory guessing. Pane information comes from
@@ -795,16 +805,20 @@ A new local Codex launched inside Orca must keep that terminal’s hook environm
 
 ## Speed
 
-The web composer's effort menu includes a Speed submenu for Persona conversations running Codex and writable external app-server threads whose current model advertises
-`serviceTiers` through `model/list`. Standard sends `default`; Fast uses the advertised tier ID, currently `priority`.
-The submenu explains increased usage or cost before selection. It is independent of reasoning effort and takes effect
-on subsequent turns. Settings > Agents > Codex also exposes the native `service_tier` default for new sessions.
+The web model panel lists the running model's advertised speeds. It offers Standard, Fast, Ultrafast and any other
+tiers the runtime advertises, such as Flex. The control is independent of reasoning effort and takes effect on
+subsequent turns. Settings > Agents > Codex also exposes the native speed default for new sessions.
 
-An explicit choice uses `thread/settings/update` and waits for acknowledgment. Refusals, unsupported methods and lost
-connections return errors without retaining a next-turn speed override. `thread/resume` and `thread/settings/updated`
-provide the current speed. A native null means Standard. Missing speed stays unknown because `thread/read` does not
-currently report it. Refreshes preserve acknowledged state, and reconnects start with unknown state until native
-settings arrive. Terminal-only panes, subagents and models without advertised tiers have no speed control.
+An app-server thread uses `thread/settings/update` with the advertised native ID. The default ID is `default` and
+the common Fast ID is `priority`. `thread/resume` and `thread/settings/updated` report the acknowledged speed.
+Native null means Standard. Missing speed stays unknown because `thread/read` does not report it.
+
+A live terminal-route Codex 0.169 or later uses the current model's tiers in its Codex home catalog. Startup settings
+and the running-version check follow "On the terminal route". The node checks the terminal for a draft or dialog,
+then types `/model --speed=<tier>`. The terminal takes `standard` for Standard and `fast` for Fast, with other tier IDs
+passed through. The command changes speed independently of model and effort. A new `thread_settings_applied` event
+confirms the selection before the next turn. A timeout reports an uncertain change. Panes without a verified rollout
+or advertised tiers, screenless hosts and subagents do not offer this control.
 
 The iOS main Assistant conversation reads the same session fields in its existing composer menu. A Speed section appears
 only when the session advertises `default` or `priority`; it uses localized Standard / Fast labels, explains Fast's extra
