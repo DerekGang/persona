@@ -75,10 +75,25 @@ class AgentSpaceTest {
         assertTrue(filtered.visibleRows.any { it.id == "mac/elsewhere" })
         assertEquals("/work/main/site", filtered.projectFolder?.path)
 
-        val pinned = AgentPreferences(sessions = listOf("usual-a", "usual-b"))
+        val pinned = AgentPreferences(sessions = listOf("mac/usual-a", "mac/usual-b"))
         val pinnedList = buildAgentList(rows, listOf(mac), pins = pinned,
-            settings = AgentListSettings(grouping = AgentGrouping.Space)).groups.single()
+            settings = AgentListSettings(grouping = AgentGrouping.Space)).groups.single { it.id == "mac/desk" }
         assertTrue(pinnedList.rows.any { it.id == "mac/elsewhere" })
         assertEquals("/work/main/site", pinnedList.projectFolder?.path)
+
+        val machineFiltered = buildAgentList(rows, listOf(mac),
+            settings = AgentListSettings(grouping = AgentGrouping.MachineSpace, quick = AgentQuickFilter.Working)).groups.single()
+        assertEquals(listOf("elsewhere"), machineFiltered.visibleRows.map { it.session.sessionId })
+        assertEquals("/work/main/site", machineFiltered.projectFolder?.path)
+
+        val machineSearched = buildAgentList(rows, listOf(mac),
+            settings = AgentListSettings(grouping = AgentGrouping.MachineSpace, query = "elsewhere")).groups.single { it.id == "mac/desk" }
+        assertEquals(listOf("elsewhere"), machineSearched.visibleRows.map { it.session.sessionId })
+        assertEquals("/work/main/site", machineSearched.projectFolder?.path)
+
+        val machinePinned = buildAgentList(rows, listOf(mac), pins = pinned,
+            settings = AgentListSettings(grouping = AgentGrouping.MachineSpace)).groups.single { it.id == "mac/desk" }
+        assertEquals(setOf("elsewhere"), machinePinned.rows.map { it.session.sessionId }.toSet())
+        assertEquals("/work/main/site", machinePinned.projectFolder?.path)
     }
 }

@@ -389,7 +389,7 @@ nonisolated struct AgentListProjection: Sendable {
             : { $0.state.isLive || settings.pinned($0.key) || inPinnedWorkspace($0) }
         // A row a quick filter showed stays a row while it is on, a subtask answered under Needs You too.
         let forest = CodexTasks.build(sessions, ownRows: settings.filter == .all ? [] : settings.kept, runs: runs)
-        let admits: (Session) -> Bool = { session in
+        let admitsScope: (Session) -> Bool = { session in
             guard !session.assistant else { return false }
             guard settings.machine.isEmpty || session.machineRef.path == settings.machine else { return false }
             guard !settings.multiHub || HubFilter.matches(settings.hub, session.group) else { return false }
@@ -421,6 +421,10 @@ nonisolated struct AgentListProjection: Sendable {
             if let hrs = parsed.sinceHours {
                 guard let updated = session.updatedAt, (now ?? Date()).timeIntervalSince(updated) <= hrs * 3600 else { return false }
             }
+            return true
+        }
+        let admits: (Session) -> Bool = { session in
+            guard admitsScope(session) else { return false }
             if settings.query.isEmpty && settings.searchScope == .all { return true }
             if settings.pagedGroups.contains(session.group) && parsed.terms.isEmpty && settings.searchScope == .all { return true }
             return session.matchesScope(settings.searchScope, terms: parsed.terms)
@@ -463,7 +467,8 @@ nonisolated struct AgentListProjection: Sendable {
         if settings.grouping == "space" {
             // Folder metadata comes from every row the scope admits, before quick filters and pinned presentation:
             // filtering to one minority folder must not move the heading's qualifier or New Agent target.
-            let complete = SpaceGroup.withProjectFolders(SpaceGroup.build(result.base, byProject: true), machines: result.machinesByRef)
+            let complete = SpaceGroup.withProjectFolders(SpaceGroup.build(forest.roots.filter(admitsScope), byProject: true),
+                                                         machines: result.machinesByRef)
             let folders = complete.reduce(into: [String: AgentProjectFolder]()) { out, group in
                 if let folder = group.projectFolder { out[group.id] = folder }
             }
