@@ -557,7 +557,9 @@ fun buildFlatAgentList(
         }
         AgentGrouping.Space -> {
             val spaces = agentSpaces(live, byProject = true)
-            val projectFolders = projectFolders(spaces, machines)
+            // Folder metadata comes from every row the scope admits, before quick filters and pinned presentation:
+            // filtering to one minority folder must not move the heading's qualifier or New Agent target.
+            val projectFolders = projectFolders(agentSpaces(sessions, byProject = true), machines)
             fun pinnedSpace(space: AgentSpace) = space.preferenceKey in pins.spaces
             fun mutedSpace(space: AgentSpace) = space.preferenceKey in mutes.spaces
             fun leading(space: AgentSpace) = pinnedSpace(space) && !mutedSpace(space)

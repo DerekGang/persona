@@ -66,6 +66,24 @@ import PersonaWire
         #expect(AgentProjectFolder.parentLabel(#"C:\Users\Sample\code\site"#, home: #"c:\users\sample"#) == #"~\code"#)
     }
 
+    @Test func aFilterDoesNotMoveTheProjectsFolder() {
+        func row(_ id: String, _ state: String, _ cwd: String) -> Session {
+            var row = session(id, state: state)
+            row.spaceID = "desk"
+            row.spaceName = "site"
+            row.cwd = cwd
+            return row
+        }
+        let rows = [row("usual-a", "idle", "/work/main/site"), row("usual-b", "idle", "/work/main/site"),
+                    row("elsewhere", "working", "/work/elsewhere/site")]
+        var settings = AgentListProjection.Settings()
+        settings.grouping = "space"
+        settings.filter = .working
+        let result = AgentListProjection.build(.init(sessions: rows, machines: [], settings: settings))
+        #expect(result.active.first?.sessions.map(\.sessionID) == ["elsewhere"])
+        #expect(result.active.first?.projectFolder?.cwd == "/work/main/site")
+    }
+
     @Test func eachFilterKeepsItsState() {
         let all = [session("a", state: "needs_you"), session("b", state: "unread"), session("c", state: "unread"),
                    session("d", state: "working"), session("e", state: "idle")]

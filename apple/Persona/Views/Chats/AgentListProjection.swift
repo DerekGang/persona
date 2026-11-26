@@ -461,8 +461,15 @@ nonisolated struct AgentListProjection: Sendable {
 
         // A selected grouping builds its own structure, not every alternative on each body evaluation.
         if settings.grouping == "space" {
-            let groups = SpaceGroup.withProjectFolders(SpaceGroup.build(result.unpinned, byProject: true), machines: result.machinesByRef).map { group in
+            // Folder metadata comes from every row the scope admits, before quick filters and pinned presentation:
+            // filtering to one minority folder must not move the heading's qualifier or New Agent target.
+            let complete = SpaceGroup.withProjectFolders(SpaceGroup.build(result.base, byProject: true), machines: result.machinesByRef)
+            let folders = complete.reduce(into: [String: AgentProjectFolder]()) { out, group in
+                if let folder = group.projectFolder { out[group.id] = folder }
+            }
+            let groups = SpaceGroup.build(result.unpinned, byProject: true).map { group in
                 var group = group
+                group.projectFolder = folders[group.id]
                 let scope = aggregateScope(group, settings: settings)
                 result.scopes[group.id] = scope
                 group.bounded = settings.pagedGroups.contains(group.group)

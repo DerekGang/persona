@@ -58,4 +58,27 @@ class AgentSpaceTest {
         assertTrue(allowed.copy(sessions = listOf(idle.id)).mutes(idle))
         assertFalse(AgentPreferences().toggleMute(idle.id, null).toggleMute(idle.id, null).mutes(idle))
     }
+
+    @Test fun filteringOrPinningRowsDoesNotMoveTheProjectsFolder() {
+        fun row(id: String, state: String, cwd: String) =
+            AgentSession(Session(machineId = "mac", sessionId = id, state = state, spaceId = "desk",
+                spaceName = "site", cwd = cwd))
+        val rows = listOf(
+            row("usual-a", "idle", "/work/main/site"),
+            row("usual-b", "idle", "/work/main/site"),
+            row("elsewhere", "working", "/work/elsewhere/site"),
+        )
+        val mac = Machine("mac", online = true, home = "/Users/sample")
+
+        val filtered = buildAgentList(rows, listOf(mac),
+            settings = AgentListSettings(grouping = AgentGrouping.Space, quick = AgentQuickFilter.Working)).groups.single()
+        assertTrue(filtered.visibleRows.any { it.id == "mac/elsewhere" })
+        assertEquals("/work/main/site", filtered.projectFolder?.path)
+
+        val pinned = AgentPreferences(sessions = listOf("usual-a", "usual-b"))
+        val pinnedList = buildAgentList(rows, listOf(mac), pins = pinned,
+            settings = AgentListSettings(grouping = AgentGrouping.Space)).groups.single()
+        assertTrue(pinnedList.rows.any { it.id == "mac/elsewhere" })
+        assertEquals("/work/main/site", pinnedList.projectFolder?.path)
+    }
 }
