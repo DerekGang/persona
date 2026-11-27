@@ -195,6 +195,10 @@ func TestLarkGateZshPrecommandModifiersAndCodeBuiltins(t *testing.T) {
 		{"dash write", `- ex POST /conversations/7123/messages '{"text":"hi"}'`, "POST", false},
 		{"emulate read", `emulate zsh -c 'ex GET /links/open'`, "", true},
 		{"emulate write", `emulate sh -c 'ex POST /conversations/7123/messages'`, "", true},
+		{"emulate -- read", `emulate -- zsh -c 'ex GET /links/open'`, "", true},
+		{"emulate -- write", `emulate -- sh -c 'ex POST /messages/99/recall'`, "", true},
+		{"trap read", `trap 'ex GET /links/open' ZERR`, "", true},
+		{"trap write", `trap 'ex POST /messages/99/recall' ZERR`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := classifyLark(tc.command, gates, "", nil)
@@ -219,6 +223,26 @@ func TestLarkGateZshPrecommandModifiersAndCodeBuiltins(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// zsh's `=cmd` expansion names the same command: `=ex` is the gate and `=lark-cli` is the CLI, not ordinary text.
+func TestLarkGateZshEqualsExpansion(t *testing.T) {
+	gates := olGate("")
+	read := classifyLark(`=ex GET /links/open`, gates, "", nil)
+	if len(read.calls) != 1 || read.calls[0].Method != "GET" || read.other || read.unknown || read.deny != "" {
+		t.Fatalf("=ex read: %+v", read)
+	}
+	write := classifyLark(`=ex POST /messages/99/recall`, gates, "", nil)
+	if len(write.calls) != 1 || write.calls[0].Method != "POST" || write.deny != "" {
+		t.Fatalf("=ex write: %+v", write)
+	}
+	if got := larkDecision(olCfg(), write.calls[0]); got != "confirm" {
+		t.Fatalf("=ex write decision %q, want confirm", got)
+	}
+	cli := classifyLark(`=lark-cli im +messages-send --chat-id oc_x --text hi`, gates, "", nil)
+	if !cli.cliWrite && !cli.unknown && !cli.other {
+		t.Fatalf("=lark-cli write was treated as ordinary: %+v", cli)
 	}
 }
 
