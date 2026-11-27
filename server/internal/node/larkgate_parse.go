@@ -439,6 +439,10 @@ func classifyLarkAt(cmd string, gates []proto.CommandGate, cwd string, risk lark
 				executableEnv = executableEnv || larkExecutableAssignment(word, remote, extraPATH)
 			}
 		}
+		// zsh's `=cmd` expansion names the command it runs (`=sh` is `sh`, `=env` is `env`, `=ex` is the gate):
+		// unwrapCommand, shellScriptIndex, gateOf and isLarkCLI must all read the resolved name, not its `=` spelling,
+		// or a shell, wrapper or gate behind it stays ordinary and its carried write reaches the gate without a card.
+		words = append([]string{strings.TrimPrefix(words[0], "=")}, words[1:]...)
 		var parsed bool
 		words, parsed = unwrapCommand(words)
 		if !parsed {
@@ -471,8 +475,10 @@ func classifyLarkAt(cmd string, gates []proto.CommandGate, cwd string, risk lark
 			merge(classifyLarkDepth(strings.Join(words[1:], " "), gates, cwd, risk, extraPATH, depth+1, relax))
 		case codeBuiltinRuns(name, words) && (gateNamed(gates, s.Text) || gateNamedFields(gates, words)):
 			v.other, v.unknown = true, true
-		case name == "trap" && (gateNamed(gates, strings.Join(words[1:], " ")) || larkCLIRe.MatchString(strings.Join(words[1:], " "))):
+		case name == "trap" && (gateNamed(gates, strings.Join(words[1:], " ")) || gateNamedFields(gates, words) || larkCLIRe.MatchString(strings.Join(words[1:], " "))):
 			// The action runs later, but it is code this command carries: its gated call must be confirmed now.
+			// gateNamedFields also sees a gate name packed inside a wrapper's quoted action (`sh -c "ex POST …"`),
+			// which gateNamed stops at the wrapper word.
 			v.other, v.unknown = true, true
 		case isLarkCLI(name):
 			// As for gated calls (parseGateCall): literal assignments earlier in the command resolve; what stays a
