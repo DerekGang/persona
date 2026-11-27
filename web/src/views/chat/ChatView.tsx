@@ -647,6 +647,12 @@ function ActiveChatView({ mid, sid, assistant, assistantManager, starting: launc
   const canShowPreview = state !== "offline" && state !== "needs_you" && !stopped && !turnFailure;
   const streaming = Boolean(replyPreview) && !streamEnded && (state === "working" || canShowPreview);
   const working = state === "working" || streaming || outgoing > 0 || awaiting;
+  // The owner's answer is what the turn waits on: the session needs the owner (a question the agent asked), or one of
+  // this conversation's requests is open (a permission card, a plan). Such a turn has no reply yet because it is not
+  // finished, not because none came: it is no empty response and Retry is not offered, which would send the question
+  // again while the card still waits (#17296). An older unanswered turn stays an empty response, and nothing here
+  // changes `working`, `lastLive` or the Stop button.
+  const awaitingUser = state === "needs_you" || interactions.length > 0;
   // The user's time stays in its row until the finished reply can show its own. An item that lands
   // while the turn is still running otherwise removes a line above the live work and moves it up.
   const latestReply = working ? undefined : lastSeg?.answer;
@@ -1793,8 +1799,8 @@ function ActiveChatView({ mid, sid, assistant, assistantManager, starting: launc
   // yet, and Retry there sent the question again (#16286).
   const stale = !detached && (!live.firstRead || Boolean(live.error));
   const allLines = useMemo(
-    () => stabilizeLines(lastLines.current, chatLines(earlier.liveItems, { live: lastLive && !outgoing, background: foldBackground, main: isMain, foldRoutineRelayReplies, latestReplyNeedsAttention, stale })),
-    [earlier.liveItems, lastLive, outgoing, foldBackground, isMain, foldRoutineRelayReplies, latestReplyNeedsAttention, stale],
+    () => stabilizeLines(lastLines.current, chatLines(earlier.liveItems, { live: lastLive && !outgoing, background: foldBackground, main: isMain, foldRoutineRelayReplies, latestReplyNeedsAttention, stale, awaitingUser })),
+    [earlier.liveItems, lastLive, outgoing, foldBackground, isMain, foldRoutineRelayReplies, latestReplyNeedsAttention, stale, awaitingUser],
   );
   lastLines.current = allLines;
   // The timeline split and the assistant display use the same history boundary: one feed walk per items change.
@@ -2289,7 +2295,7 @@ function ActiveChatView({ mid, sid, assistant, assistantManager, starting: launc
     await deliver(resolved.payload, uuid());
     return true;
   }, [deliver, mid, sid]);
-  const emptyAction = canCompose && !working && !gate.blocked && !stoppedLine ? retryEmpty : undefined;
+  const emptyAction = canCompose && !working && !awaitingUser && !gate.blocked && !stoppedLine ? retryEmpty : undefined;
   // the failure notice "Retry" was pressed on: kept here, not in the note, so it stays gone while the session goes through
   // needs-you and back before the hub clears it (iOS ChatView @State retried)
   const [retriedOn, setRetried] = useState<{ chat: string; reason?: string }>();

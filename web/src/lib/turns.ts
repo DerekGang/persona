@@ -991,6 +991,11 @@ export interface ChatLinesOptions {
   /** The items may predate what the transcript holds: a cached page shown before the hub's newest page landed, or after
    *  that read failed. A turn without an answer there may have one the page has not read, so none is called empty. */
   stale?: boolean;
+  /** The session is waiting for the owner: it is `needs_you`, or a request of this conversation (a question, a
+   *  permission card) is open. Its latest turn has no reply yet because it is not finished, not because none came: it
+   *  is not an empty response and Retry is not offered (#17296). Only the latest turn is excused: an older unanswered
+   *  turn stays empty. */
+  awaitingUser?: boolean;
 }
 
 const COMPACT_COMMAND_RE = /^\/compact(?:\s|$)/;
@@ -1005,7 +1010,7 @@ function isLocalCommandTurn(user: UserMessage, steps: readonly Step[]): boolean 
     steps.every((step) => step.kind === "notice" && !step.item.task && !step.item.wake && !parseAPIError(step.item.text));
 }
 
-function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>, stale = false): ChatLine[] {
+function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>, stale = false, awaiting = false): ChatLine[] {
   const out: ChatLine[] = [];
   let ordered = t.ordered;
   // work a background task woke the agent for opens with that notice, where a message would be (a subagent's report
@@ -1029,7 +1034,7 @@ function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>, 
   const end = segs.at(-1), at = t.ordered.at(-1)?.seq ?? 0;
   if (end && !live && t.trailing.some((n) => isInterruptNotice(n) && (!end.answer || n.seq > at))) end.cut = true;
   const user = end?.user;
-  if (end && user && !live && !stale && !end.answer && !t.trailing.length && isOwnMessage(user) && !user.queued && !isLoopTick(user) &&
+  if (end && user && !live && !awaiting && !stale && !end.answer && !t.trailing.length && isOwnMessage(user) && !user.queued && !isLoopTick(user) &&
       !isLocalCommandTurn(user, end.steps) &&
       !end.steps.some((step) => step.kind === "visualization" || (step.kind === "image" && step.item.role === "assistant") ||
         (step.kind === "tool" && !step.result && supervisionTool(step.use.tool_name) === "supervision_finish" && step.use.tool_input?.visibility === "silent")) &&
@@ -1059,6 +1064,8 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
   const attentionReply = opts.latestReplyNeedsAttention && opts.foldRoutineRelayReplies ? feed.findLast(isAnswerText)?.id : undefined;
   const active = opts.live && source ? blocks.find((b) => b.kind === "turn" && (b.turn.ordered.some((i) => i.id === source.id) || b.turn.trailing.some((i) => i.id === source.id))) : undefined;
   const liveId = active && active.kind === "turn" ? active.turn.id : undefined;
+  // The turn the owner's answer is waited on is the newest one; an older unanswered turn stays empty (#17296).
+  const awaitingTurn = opts.awaitingUser === true ? blocks.findLast((b) => b.kind === "turn") : undefined;
   const out: ChatLine[] = [];
   // A result can land after another segment or user input; associate it with its original call, not its position.
   const results = new Map(items.filter((i) => i.kind === "tool_result" && i.tool_use_id).map((i) => [i.tool_use_id!, i]));
@@ -1103,7 +1110,8 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
       append([isCompaction(b.item) ? { kind: "compact", id: b.item.id, item: b.item } : { kind: "recaps", id: b.item.id, items: [b.item] }], [b.item], false);
     } else {
       const live = b.turn.id === liveId;
-      append(turnLines(b.turn, live, results, opts.stale), round ? [...b.turn.ordered, ...b.turn.trailing] : b.turn.ordered, live);
+      const awaiting = awaitingTurn?.kind === "turn" && awaitingTurn.turn.id === b.turn.id;
+      append(turnLines(b.turn, live, results, opts.stale, awaiting), round ? [...b.turn.ordered, ...b.turn.trailing] : b.turn.ordered, live);
     }
   }
   // Working with nothing of this run yet (the last thing is a recap): retain the supervision round's visibility.

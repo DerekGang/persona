@@ -243,6 +243,22 @@ describe("chatLines", () => {
     expect(empty({ stale: true })).toBe(false);
   });
 
+  it("keeps the latest turn from looking empty while the owner's answer is what it waits on (#17296)", () => {
+    const items = [u(1, "Check this"), tool(2, "ask")];
+    const empty = (opts: { awaitingUser?: boolean }) => {
+      const [line] = chatLines(items, opts);
+      return line.kind === "segment" && line.seg.emptyResponse === true;
+    };
+    expect(empty({})).toBe(true);
+    expect(empty({ awaitingUser: true })).toBe(false);
+  });
+
+  it("still calls an older unanswered turn empty while the newest one waits on the owner (#17296)", () => {
+    // Only the turn the session waits on is unfinished: a question the agent moved past is still an empty response.
+    const lines = chatLines([u(1, "first"), tool(2, "search"), u(3, "second")], { awaitingUser: true });
+    expect(lines.map((l) => l.kind === "segment" && l.seg.emptyResponse === true)).toEqual([true, false]);
+  });
+
   it("omits the empty-response fallback after a silent supervision finish", () => {
     const finish = { ...tool(2, "finish"), tool_name: "mcp__persona__supervision_finish", tool_input: { visibility: "silent" } };
     const receipt = { ...res(3, "finish"), text: '{"visibility":"silent"}' };

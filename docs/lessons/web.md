@@ -1620,3 +1620,12 @@ and Retry sent the question a second time although the reply was in the transcri
 act on them only once the page holds the newest read, `firstRead` without an `error` (`chatLines` `stale`). A failed
 read keeps its "Refresh failed" pill, which reloads and sends nothing. Test with a cache that lacks the reply and a held
 read (`sync/fake-hub.ts` `hold`), not with a mocked transcript.
+
+## A turn the session still waits on is not an empty response (#17296)
+
+"No response returned" with Retry is drawn when `chatLines` finds an owned user message with no reply on a turn it
+judges finished. A session that is `needs_you`, or has one of its requests open (a question, a permission card), has a
+latest turn without a reply because it is not finished: draw the empty outcome and Retry only when the owner's answer
+is not what the turn waits on (`chatLines` `awaitingUser`, from `ChatView`'s state and its own interactions). Excuse
+only the newest turn: an older unanswered turn is still empty. Test with a `needs_you` session and with an open card
+(`sync/fake-hub.ts`), and keep a plain idle turn offering both.
