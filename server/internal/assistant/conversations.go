@@ -248,7 +248,9 @@ type relayMsg struct {
 	// Card identifies the card behind a quiet task's needs notice or a standalone permission relay.
 	Card string `json:"card,omitempty"`
 	// Internal marks a message meant only for the assistant, such as a card-ledger report or a card routed away
-	// from the owner. queuedRelays leaves it out of the queue shown above the composer; delivery is unchanged.
+	// from the owner. queuedRelays leaves it out of the queue shown above the composer; delivery is unchanged. A
+	// version that does not know it drops it on its next save: the relay then shows above the composer until it is
+	// consumed, as an Urgent message ranks as any other.
 	Internal bool `json:"internal,omitempty"`
 	// Urgent: a supervision message with a signal that waits on a decision (relay_presence.go). A version that does
 	// not know it drops it on its next save: the message then ranks and waits as any other supervision message.
