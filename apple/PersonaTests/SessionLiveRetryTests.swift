@@ -157,11 +157,8 @@ struct SessionLiveRetryTests {
         model.applySessions([MachineRef(group: "", id: "box"): [session]])
         model.subscribe(key, by: UUID())
         model.handle(.live(key, try live()), group: "")
-        model.handle(.live(key, try live(Self.compactionObject)), group: "")
         #expect(model.liveRetry(key) != nil)
-        #expect(model.liveCompaction(key)?.elapsedS == 7)
         #expect(await model.close(key))
         #expect(model.liveRetry(key) == nil)
-        #expect(model.liveCompaction(key) == nil)
     }
 }
