@@ -81,12 +81,15 @@ func (n *Node) retire(ctx context.Context, id string, closeTerminal, afterExit b
 	if err := n.resolveStopRuntime(ctx, id); err != nil {
 		return false, err
 	}
+	if !cause.AllowsSupervisorResume() || cause == proto.StopRestart || cause == proto.StopTimeout {
+		cause = proto.StopUser
+	}
 	if !guard.Active {
+		if n.runtimeAlreadyClosed(id) {
+			return false, nil
+		}
 		if h, ok := n.runtimeCloseTarget(id); ok {
-			if _, err := n.runtimeClose(ctx, h, id); err != nil {
-				return false, err
-			}
-			return true, nil
+			return n.closeRuntimeWithCause(ctx, h, id, cause)
 		}
 	}
 	unlock, _, ok, err := n.stoppable(id, true)
@@ -108,9 +111,6 @@ func (n *Node) retire(ctx context.Context, id string, closeTerminal, afterExit b
 		if !stillRunning {
 			return false, nil
 		}
-	}
-	if !cause.AllowsSupervisorResume() || cause == proto.StopRestart || cause == proto.StopTimeout {
-		cause = proto.StopUser
 	}
 	if err := n.closeWithCause(ctx, id, cause); err != nil {
 		return false, err
@@ -134,6 +134,9 @@ func (n *Node) runtimeCloseTarget(id string) (*runtimeConn, bool) {
 	if h == nil {
 		return nil, false
 	}
+	if a, ok := n.agent(id); ok && a.PaneID != "" {
+		return h, false
+	}
 	row, ok := h.row(id)
 	if !ok || !runtimeCanClose(row) || n.isAssistantSession(id) || n.runtimeAssistant(id) {
 		return h, false
@@ -147,6 +150,17 @@ func (n *Node) runtimeCloseTarget(id string) (*runtimeConn, bool) {
 		return h, false
 	}
 	return h, true
+}
+
+// runtimeAlreadyClosed is a runtime session whose saved stop provenance says a retire already succeeded. Its row may
+// still be listed, or may already have left the runtime's list; either way a repeat is a no-op, not a refusal.
+func (n *Node) runtimeAlreadyClosed(id string) bool {
+	_, _, known := n.runtimes.belongs(id)
+	if !known {
+		return false
+	}
+	st, ok := n.state.get(id)
+	return ok && st.StopCause != proto.StopUnknown
 }
 
 // runtimeClose uses the runtime's own close for a live, terminal-less runtime session. The runtime's close is the
@@ -165,6 +179,27 @@ func (n *Node) runtimeClose(ctx context.Context, h *runtimeConn, id string) (boo
 		return false, err
 	}
 	return true, nil
+}
+
+// closeRuntimeWithCause records provenance around the runtime's irreversible close. It mirrors
+// closeWithCauseChecked: an automatic close starts as unknown and becomes its requested cause only after the runtime
+// confirmed the close; a user close keeps the save/readback guarantee before the runtime is asked.
+func (n *Node) closeRuntimeWithCause(ctx context.Context, h *runtimeConn, id string, cause proto.StopCause) (closed bool, err error) {
+	if cause == proto.StopUser {
+		n.state.stoppedOrCreate(id, proto.StopUser)
+		if err := n.saveStopCause(ctx, id, proto.StopUser); err != nil {
+			return false, err
+		}
+		defer n.state.stoppedOrCreate(id, proto.StopUser)
+	} else {
+		n.state.stoppedOrCreate(id, proto.StopUnknown)
+		defer func() {
+			if closed {
+				n.state.stoppedOrCreate(id, cause)
+			}
+		}()
+	}
+	return n.runtimeClose(ctx, h, id)
 }
 
 // verifyRetireActivityGuardLocked checks live host state and current transcript activity under n.recovery and n.typing

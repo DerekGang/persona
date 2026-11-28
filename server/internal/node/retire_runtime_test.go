@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/host"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -120,7 +121,9 @@ func TestStopAndRetireClassifyNonHexRuntimeSessions(t *testing.T) {
 			}
 		})
 		t.Run("retire/"+id, func(t *testing.T) {
-			raw, err := nodeCall(t, n, "session.retire", map[string]any{"session_id": id, "close_terminal": true})
+			raw, err := nodeCall(t, n, "session.retire", map[string]any{
+				"session_id": id, "close_terminal": true, "stop_cause": proto.StopTaskCompleted,
+			})
 			var res struct {
 				Closed bool `json:"closed"`
 			}
@@ -208,6 +211,179 @@ func TestRetireRuntimeSessionRefusesDeclaredTerminal(t *testing.T) {
 	}
 	if got := rt.got("session.close"); len(got) != 0 {
 		t.Fatalf("runtime session.close calls = %s, want none", got)
+	}
+}
+
+func TestRuntimeRetirePersistsStopCauseAndInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cause   proto.StopCause
+		want    proto.StopCause
+		fail    bool
+		userHub bool
+	}{
+		{name: "task completed", cause: proto.StopTaskCompleted, want: proto.StopTaskCompleted},
+		{name: "timeout normalizes to user", cause: proto.StopTimeout, want: proto.StopUser, userHub: true},
+		{name: "failed automatic close stays unknown", cause: proto.StopTaskCompleted, want: proto.StopUnknown, fail: true},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			n, hub := runtimeNode(t)
+			rt := dialRuntime(t, n, map[string]any{
+				"runtime": "paseo", "name": "Paseo", "version": "test",
+				"caps": map[string]any{"start": true, "send": true, "interrupt": true, "close": true},
+			})
+			const id = "paseo-cause-session"
+			if err := rt.peer.Notify("runtime.sessions", map[string]any{
+				"sessions": []proto.Session{{SessionID: id, Title: "Cause runtime", Cwd: "/work", Status: proto.StatusIdle}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the runtime row", func() bool {
+				h, _, known := n.runtimes.belongs(id)
+				return h != nil && known
+			})
+			if tc.fail {
+				rt.answer = func(method string, _ json.RawMessage) (any, error) {
+					if method == "session.close" {
+						return nil, errors.New("runtime close failed")
+					}
+					return map[string]any{"ok": true}, nil
+				}
+			}
+			if tc.userHub {
+				hub.answer = func(method string, _ json.RawMessage) (any, error, bool) {
+					if method != "state.load" {
+						return nil, nil, false
+					}
+					st, _ := n.state.get(id)
+					return map[string]any{"sessions": map[string]sessionState{id: st}}, nil, true
+				}
+			}
+			raw, err := nodeCall(t, n, "session.retire", map[string]any{
+				"session_id": id, "close_terminal": true, "stop_cause": tc.cause,
+			})
+			if tc.fail {
+				if err == nil {
+					t.Fatal("failed runtime close reported success")
+				}
+			} else {
+				var out struct {
+					Closed bool `json:"closed"`
+				}
+				if err != nil || json.Unmarshal(raw, &out) != nil || !out.Closed {
+					t.Fatalf("runtime retire = %s, %v; want closed", raw, err)
+				}
+			}
+			if got := n.stopCause(id); got != tc.want {
+				t.Fatalf("stop cause = %q, want %q", got, tc.want)
+			}
+			infoRaw, err := nodeCall(t, n, "session.info", map[string]any{"session_id": id})
+			if err != nil {
+				t.Fatalf("session.info: %v", err)
+			}
+			var info map[string]any
+			if err := json.Unmarshal(infoRaw, &info); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := info["stop_cause"].(string); got != string(tc.want) {
+				t.Fatalf("session.info stop_cause = %q, want %q (%s)", got, tc.want, infoRaw)
+			}
+		})
+	}
+}
+
+func TestRuntimeRetireRefusesHostPaneSnapshotLag(t *testing.T) {
+	n, _ := runtimeNode(t)
+	rt := dialRuntime(t, n, map[string]any{
+		"runtime": "paseo", "name": "Paseo", "version": "test",
+		"caps": map[string]any{"start": true, "send": true, "interrupt": true, "close": true},
+	})
+	const id = "paseo-pane-lag"
+	if err := rt.peer.Notify("runtime.sessions", map[string]any{
+		"sessions": []proto.Session{{SessionID: id, Title: "Pane runtime", Cwd: "/work", Status: proto.StatusIdle}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the runtime row", func() bool {
+		h, _, known := n.runtimes.belongs(id)
+		return h != nil && known
+	})
+	n.mu.Lock()
+	n.agents[id] = host.Agent{Agent: "paseo", PaneID: "w1:p1"}
+	n.mu.Unlock()
+	if _, err := nodeCall(t, n, "session.retire", map[string]any{"session_id": id, "close_terminal": true}); err == nil {
+		t.Fatal("runtime session with a live host pane was retired")
+	} else if code, _ := refusalOf(t, err); code != notRetirable {
+		t.Fatalf("session.retire code = %q (err=%v), want %q", code, err, notRetirable)
+	}
+	if got := rt.got("session.close"); len(got) != 0 {
+		t.Fatalf("runtime session.close calls = %s, want none", got)
+	}
+}
+
+func TestRuntimeRetireIsIdempotentAfterRowGone(t *testing.T) {
+	n, _ := runtimeNode(t)
+	rt := dialRuntime(t, n, map[string]any{
+		"runtime": "paseo", "name": "Paseo", "version": "test",
+		"caps": map[string]any{"start": true, "send": true, "interrupt": true, "close": true},
+	})
+	const id = "paseo-repeat"
+	if err := rt.peer.Notify("runtime.sessions", map[string]any{
+		"sessions": []proto.Session{{SessionID: id, Title: "Repeat runtime", Cwd: "/work", Status: proto.StatusIdle}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the runtime row", func() bool {
+		h, _, known := n.runtimes.belongs(id)
+		return h != nil && known
+	})
+	first, err := nodeCall(t, n, "session.retire", map[string]any{
+		"session_id": id, "close_terminal": true, "stop_cause": proto.StopTaskCompleted,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstOut struct {
+		Closed bool `json:"closed"`
+	}
+	if err := json.Unmarshal(first, &firstOut); err != nil || !firstOut.Closed {
+		t.Fatalf("first runtime retire = %s, %v; want closed", first, err)
+	}
+	repeated, err := nodeCall(t, n, "session.retire", map[string]any{
+		"session_id": id, "close_terminal": true, "stop_cause": proto.StopTaskCompleted,
+	})
+	if err != nil {
+		t.Fatalf("repeated runtime retire: %v", err)
+	}
+	var repeatedOut struct {
+		Closed bool `json:"closed"`
+	}
+	if err := json.Unmarshal(repeated, &repeatedOut); err != nil || repeatedOut.Closed {
+		t.Fatalf("repeated runtime retire = %s, %v; want closed=false", repeated, err)
+	}
+	if err := rt.peer.Notify("runtime.sessions", map[string]any{"sessions": []proto.Session{}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the runtime row gone", func() bool {
+		h, _, _ := n.runtimes.belongs(id)
+		if h == nil {
+			return true
+		}
+		_, ok := h.row(id)
+		return !ok
+	})
+	second, err := nodeCall(t, n, "session.retire", map[string]any{
+		"session_id": id, "close_terminal": true, "stop_cause": proto.StopTaskCompleted,
+	})
+	if err != nil {
+		t.Fatalf("repeat runtime retire: %v", err)
+	}
+	var secondOut struct {
+		Closed bool `json:"closed"`
+	}
+	if err := json.Unmarshal(second, &secondOut); err != nil || secondOut.Closed {
+		t.Fatalf("repeat runtime retire = %s, %v; want closed=false", second, err)
 	}
 }
 

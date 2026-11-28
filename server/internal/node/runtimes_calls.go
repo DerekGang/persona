@@ -523,7 +523,7 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 		// show "0 tokens, 0 turns" (#8261). They stay zero for the apps older than that, which decode them as required
 		// numbers and read them as "none yet".
 		info := map[string]any{"session_id": p.SessionID, "agent": h.agent(), "context_tokens": 0, "output_tokens": 0,
-			"compactions": 0, "turns": 0, "usage_unknown": true}
+			"compactions": 0, "turns": 0, "usage_unknown": true, "stop_cause": n.effectiveStopCause(p.SessionID)}
 		for _, s := range h.sessionsCopy() {
 			if s.SessionID == p.SessionID {
 				info["cwd"], info["model"], info["agent"], info["last_activity"] = s.Cwd, s.Model, s.Agent, s.UpdatedAt
