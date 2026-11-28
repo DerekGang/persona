@@ -1,6 +1,9 @@
 package node
 
 import (
+	"context"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -19,6 +22,8 @@ func TestOpCalls(t *testing.T) {
 		{"sudo -i op vault list", 1},
 		{"env FOO=1 op vault list", 1},
 		{"env -i op vault list", 1},
+		{"env -S 'op vault list'", 1},
+		{"env --split-string='op vault list'", 1},
 		{"timeout 5 op vault list", 1},
 		{"timeout -s KILL 5 op vault list", 1},
 		{"nice -n 10 op vault list", 1},
@@ -29,6 +34,15 @@ func TestOpCalls(t *testing.T) {
 		{"op vault list | head -3", 1},
 		{"echo hi && op whoami", 1},
 		{"op vault list; op whoami", 2},
+		{"op; op vault list", 2},
+		{"op| head -1", 1},
+		{"op&", 1},
+		{`"op" vault list`, 1},
+		{`\op vault list`, 1},
+		{"o'p' vault list", 1},
+		{`\o\p vault list`, 1},
+		{"echo $(o'p' vault list)", 1},
+		{"echo $(sh -c 'echo $(op vault list)')", 1},
 		{"if op vault list; then true; fi", 1},
 		{"while op vault list; do true; done", 1},
 		{"then op vault list", 1},
@@ -164,5 +178,36 @@ func TestOpBashVerdictOtherOS(t *testing.T) {
 	t.Setenv(opServiceAccountEnv, "")
 	if why := opBashVerdict("op vault list"); why != "" {
 		t.Errorf("on Linux: refused, want allowed: %q", why)
+	}
+}
+
+// An Agent's ordinary Bash request must reach the op gate; the cua-only early return used to drop it first.
+func TestOpGateHookReachesAgentBash(t *testing.T) {
+	oldOS := opGateOS
+	opGateOS = "darwin"
+	t.Cleanup(func() { opGateOS = oldOS })
+	t.Setenv(opServiceAccountEnv, "")
+	n := codexTestNode(t)
+	withFakeHub(t, n)
+	const agent = "33333333-3333-4333-8333-333333333333"
+	for _, command := range []string{"op vault list", "o'p' vault list", `\o\p vault list`} {
+		raw, err := json.Marshal(hookInput{
+			HookEventName: "PreToolUse", SessionID: agent, ToolName: "Bash", ToolUseID: "toolu_op",
+			ToolInput: json.RawMessage(`{"command":` + strconv.Quote(command) + `}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := n.handleHook(context.Background(), sockRequest{Input: raw, Attempt: "a1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil {
+			t.Fatalf("the Agent's %q op Bash request was dropped before the gate", command)
+		}
+		encoded, _ := json.Marshal(out)
+		if !strings.Contains(string(encoded), `"permissionDecision":"deny"`) {
+			t.Fatalf("%q: op Bash gate did not deny: %s", command, encoded)
+		}
 	}
 }

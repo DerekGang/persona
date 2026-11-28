@@ -75,6 +75,10 @@ func TestMentionsGateWord(t *testing.T) {
 	}{
 		{bash("op vault list"), true},
 		{bash("cua-driver call click '{}'"), true},
+		{bash("o'p' vault list"), true},
+		{bash(`\o\p vault list`), true},
+		{bash("echo $(o'p' vault list)"), true},
+		{bash("cua-dri'ver' call click '{}'"), true},
 		{bash("ls -la"), false},
 		{bash("open README.md"), false},
 		{input("PreToolUse", "Read", map[string]any{"file_path": "op"}), false},

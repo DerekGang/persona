@@ -14,6 +14,7 @@ import (
 	"github.com/nwverse/persona/server/internal/herdr"
 	"github.com/nwverse/persona/server/internal/host"
 	"github.com/nwverse/persona/server/internal/procinfo"
+	"github.com/nwverse/persona/server/internal/shellcmd"
 )
 
 // The environment the engines give a pane's processes, naming the pane (node/host*.go set and read the same names).
@@ -125,8 +126,32 @@ func mentionsGateWord(input json.RawMessage, words string) bool {
 		return false
 	}
 	for _, w := range strings.Split(words, ",") {
-		if w != "" && containsWord(in.ToolInput.Command, w) {
+		if w != "" && mentionsWord(in.ToolInput.Command, w) {
 			return true
+		}
+	}
+	return false
+}
+
+// mentionsWord checks a shell command after its quotes and escapes are removed: `o'p'` runs the same program as `op`.
+func mentionsWord(s, word string) bool {
+	if containsWord(s, word) {
+		return true
+	}
+	segs, ok := shellcmd.Split(s)
+	if !ok {
+		return false
+	}
+	for _, seg := range segs {
+		for _, w := range seg.Words {
+			if w == word || filepath.Base(w) == word {
+				return true
+			}
+		}
+		for _, nested := range seg.Nested {
+			if mentionsWord(nested, word) {
+				return true
+			}
 		}
 	}
 	return false
@@ -170,7 +195,7 @@ func runsCua(input json.RawMessage) bool {
 		} `json:"tool_input"`
 	}
 	return json.Unmarshal(input, &in) == nil && in.Event == "PreToolUse" && in.Tool == "Bash" &&
-		strings.Contains(in.ToolInput.Command, "cua-driver")
+		mentionsWord(in.ToolInput.Command, "cua-driver")
 }
 
 // Hook hands a Claude Code hook's input to the node and returns what the hook should print (nil: let the TUI decide).

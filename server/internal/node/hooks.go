@@ -488,9 +488,9 @@ func (n *Node) handleHook(ctx context.Context, req sockRequest) (any, error) {
 		n.notifyHookEvent(ctx, req, in, stopSig)
 	}
 	// Every Bash call of every agent waits on this hook. Only the assistant's go to larkGate, and another agent's
-	// needs only the cua-driver check below: one that does not name cua-driver goes on here, before the card's
-	// title is looked up (a re-read of the transcript's tail) and its claude is watched (#2474).
-	if in.HookEventName == "PreToolUse" && in.ToolName == "Bash" && !bashNamesCua(in.ToolInput) && !n.isAssistantSession(in.SessionID) {
+	// needs only the cua-driver and op checks below: one that names neither goes on here, before the card's title is
+	// looked up (a re-read of the transcript's tail) and its claude is watched (#2474).
+	if in.HookEventName == "PreToolUse" && in.ToolName == "Bash" && !bashNamesCua(in.ToolInput) && !bashNamesOp(in.ToolInput) && !n.isAssistantSession(in.SessionID) {
 		return nil, nil
 	}
 
@@ -894,7 +894,20 @@ func bashNamesCua(input json.RawMessage) bool {
 	var c struct {
 		Command string `json:"command"`
 	}
-	return json.Unmarshal(input, &c) == nil && strings.Contains(c.Command, "cua-driver")
+	return json.Unmarshal(input, &c) == nil && shellWordsMention(c.Command, "cua-driver")
+}
+
+// bashNamesOp is whether a Bash call needs the op gate. It is deliberately textual: a command the parser cannot
+// follow still reaches opBashVerdict, which then fails closed.
+func bashNamesOp(input json.RawMessage) bool {
+	var c struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(input, &c) != nil {
+		return false
+	}
+	calls, ok := opCalls(c.Command)
+	return len(calls) > 0 || !ok
 }
 
 func asksPhone(in hookInput) bool {

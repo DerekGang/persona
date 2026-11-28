@@ -40,6 +40,25 @@ var opShellControls = map[string]bool{
 	"!": true, "{": true, "}": true,
 }
 
+// shellWordsMention finds a gate word after the shell removes quotes and escapes: `o'p'` runs `op`.
+func shellWordsMention(command, word string) bool {
+	if strings.Contains(command, word) {
+		return true
+	}
+	segs, ok := shellcmd.Split(command)
+	if !ok {
+		return false
+	}
+	for _, seg := range segs {
+		for _, w := range seg.Words {
+			if w == word || filepath.Base(w) == word {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // opWrapperValues: the wrapper options that take the next word, by wrapper. An option not listed for that wrapper is
 // skipped alone (the safest reading of the command follows it), and an --option=value carries its value already.
 var opWrapperValues = map[string]map[string]bool{
@@ -79,16 +98,19 @@ func opCalls(cmd string) (calls []opCall, ok bool) {
 }
 
 func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, ok bool) {
-	if !strings.Contains(cmd, "op") {
-		return nil, true
-	}
 	segs, ok := shellcmd.Split(cmd)
 	if !ok {
 		return nil, !opCallText.MatchString(cmd)
 	}
 	for _, s := range segs {
 		segmentServiceAccount := serviceAccount
-		if depth <= 2 {
+		if depth > 2 {
+			for _, nested := range s.Nested {
+				if opCallText.MatchString(nested) {
+					return nil, false
+				}
+			}
+		} else {
 			for _, nested := range s.Nested {
 				inner, ok := opCallsDepth(nested, serviceAccount, depth+1)
 				if !ok {
@@ -120,6 +142,38 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 			for len(words) > 0 && strings.HasPrefix(words[0], "-") {
 				w := words[0]
 				words = words[1:]
+				if name == "env" && w == "--split-string" {
+					if len(words) == 0 {
+						break
+					}
+					inner, ok := opCallsDepth(words[0], segmentServiceAccount, depth+1)
+					if !ok {
+						return nil, false
+					}
+					calls = append(calls, inner...)
+					words = words[1:]
+					continue
+				}
+				if name == "env" && strings.HasPrefix(w, "--split-string=") {
+					inner, ok := opCallsDepth(strings.TrimPrefix(w, "--split-string="), segmentServiceAccount, depth+1)
+					if !ok {
+						return nil, false
+					}
+					calls = append(calls, inner...)
+					continue
+				}
+				if name == "env" && w == "-S" {
+					if len(words) == 0 {
+						break
+					}
+					inner, ok := opCallsDepth(words[0], segmentServiceAccount, depth+1)
+					if !ok {
+						return nil, false
+					}
+					calls = append(calls, inner...)
+					words = words[1:]
+					continue
+				}
 				if strings.Contains(w, "=") {
 					continue // --option=value
 				}
