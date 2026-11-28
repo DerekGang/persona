@@ -22,23 +22,6 @@ func (s *stateFile) stopped(id string, cause proto.StopCause) {
 	})
 }
 
-// stoppedOrCreate records a runtime session's stop cause even when it has no start record yet. Runtime rows are owned
-// by their runtime and need not have one; unlike stopped, this must not lose the provenance that session.info reads.
-func (s *stateFile) stoppedOrCreate(id string, cause proto.StopCause) {
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-	s.mu.Lock()
-	v := s.Sessions[id]
-	v.StopCause = cause
-	v.StopCauseAt = max(time.Now().UnixNano(), v.StopCauseAt+1)
-	s.Sessions[id] = v
-	persist := s.persist
-	s.mu.Unlock()
-	if persist != nil {
-		persist(id, v)
-	}
-}
-
 // clearStopAfterAssistantInput retires the Stop or Exit from before an accepted input.
 // An interrupt can be recorded before it takes the typing lock, so keep any newer mark.
 func (s *stateFile) clearStopAfterAssistantInput(id string, previousStopAt int64) {

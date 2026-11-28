@@ -275,8 +275,12 @@ func TestRuntimeRetirePersistsStopCauseAndInfo(t *testing.T) {
 					t.Fatalf("runtime retire = %s, %v; want closed", raw, err)
 				}
 			}
-			if got := n.stopCause(id); got != tc.want {
-				t.Fatalf("stop cause = %q, want %q", got, tc.want)
+			h, _, _ := n.runtimes.belongs(id)
+			if got, ok := h.stopCause(id); !ok || got != tc.want {
+				t.Fatalf("runtime stop cause = %q (present=%v), want %q", got, ok, tc.want)
+			}
+			if _, ok := n.state.get(id); ok {
+				t.Fatal("runtime-owned session gained a Persona-owned state record")
 			}
 			infoRaw, err := nodeCall(t, n, "session.info", map[string]any{"session_id": id})
 			if err != nil {
@@ -291,6 +295,49 @@ func TestRuntimeRetirePersistsStopCauseAndInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRuntimeRunningAgainClearsStopCause(t *testing.T) {
+	n, _ := runtimeNode(t)
+	rt := dialRuntime(t, n, map[string]any{
+		"runtime": "paseo", "name": "Paseo", "version": "test",
+		"caps": map[string]any{"start": true, "send": true, "interrupt": true, "close": true},
+	})
+	const id = "paseo-run-again"
+	notify := func(status string) {
+		t.Helper()
+		if err := rt.peer.Notify("runtime.sessions", map[string]any{
+			"sessions": []proto.Session{{SessionID: id, Title: "Run again", Cwd: "/work", Status: status}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notify(proto.StatusIdle)
+	waitFor(t, "the runtime row", func() bool {
+		h, _, known := n.runtimes.belongs(id)
+		return h != nil && known
+	})
+	raw, err := nodeCall(t, n, "session.retire", map[string]any{
+		"session_id": id, "close_terminal": true, "stop_cause": proto.StopTaskCompleted,
+	})
+	if err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	var out struct {
+		Closed bool `json:"closed"`
+	}
+	if json.Unmarshal(raw, &out) != nil || !out.Closed {
+		t.Fatalf("retire = %s, want closed", raw)
+	}
+	h, _, _ := n.runtimes.belongs(id)
+	if got, ok := h.stopCause(id); !ok || got != proto.StopTaskCompleted {
+		t.Fatalf("stop cause after retire = %q (present=%v), want task_completed", got, ok)
+	}
+	notify(proto.StatusWorking)
+	waitFor(t, "the new running observation", func() bool {
+		_, ok := h.stopCause(id)
+		return !ok
+	})
 }
 
 func TestRuntimeRetireRefusesHostPaneSnapshotLag(t *testing.T) {

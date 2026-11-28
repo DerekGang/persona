@@ -175,23 +175,39 @@ func (n *Node) runtimeClose(ctx context.Context, h *runtimeConn, id string) (boo
 
 // closeRuntimeWithCause records provenance around the runtime's irreversible close. It mirrors
 // closeWithCauseChecked: an automatic close starts as unknown and becomes its requested cause only after the runtime
-// confirmed the close; a user close keeps the save/readback guarantee before the runtime is asked.
+// confirmed the close; a user close keeps the save/readback guarantee before the runtime is asked when Persona owns a
+// session record. Runtime-owned sessions Persona did not start keep their cause on this runtime connection, never in
+// the node's Persona-owned state.
 func (n *Node) closeRuntimeWithCause(ctx context.Context, h *runtimeConn, id string, cause proto.StopCause) (closed bool, err error) {
 	if cause == proto.StopUser {
-		n.state.stoppedOrCreate(id, proto.StopUser)
-		if err := n.saveStopCause(ctx, id, proto.StopUser); err != nil {
+		if err := n.runtimeStopCause(ctx, h, id, proto.StopUser, true); err != nil {
 			return false, err
 		}
-		defer n.state.stoppedOrCreate(id, proto.StopUser)
+		defer h.setStopCause(id, proto.StopUser)
 	} else {
-		n.state.stoppedOrCreate(id, proto.StopUnknown)
+		_ = n.runtimeStopCause(ctx, h, id, proto.StopUnknown, false)
 		defer func() {
 			if closed {
-				n.state.stoppedOrCreate(id, cause)
+				_ = n.runtimeStopCause(ctx, h, id, cause, false)
 			}
 		}()
 	}
 	return n.runtimeClose(ctx, h, id)
+}
+
+// runtimeStopCause records runtime close provenance. A session Persona started keeps its session record and the
+// durable save/readback path; a runtime-owned session Persona only observes has no record by design, so its cause is
+// kept on the connection rather than creating ownership.
+func (n *Node) runtimeStopCause(ctx context.Context, h *runtimeConn, id string, cause proto.StopCause, durable bool) error {
+	h.setStopCause(id, cause)
+	if _, owned := n.state.get(id); !owned {
+		return nil
+	}
+	if durable && cause == proto.StopUser {
+		return n.saveStopCause(ctx, id, cause)
+	}
+	n.state.stopped(id, cause)
+	return nil
 }
 
 // verifyRetireActivityGuardLocked checks live host state and current transcript activity under n.recovery and n.typing
