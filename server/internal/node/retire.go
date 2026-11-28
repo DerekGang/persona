@@ -85,9 +85,6 @@ func (n *Node) retire(ctx context.Context, id string, closeTerminal, afterExit b
 		cause = proto.StopUser
 	}
 	if !guard.Active {
-		if n.runtimeAlreadyClosed(id) {
-			return false, nil
-		}
 		if h, ok := n.runtimeCloseTarget(id); ok {
 			return n.closeRuntimeWithCause(ctx, h, id, cause)
 		}
@@ -137,6 +134,12 @@ func (n *Node) runtimeCloseTarget(id string) (*runtimeConn, bool) {
 	if a, ok := n.agent(id); ok && a.PaneID != "" {
 		return h, false
 	}
+	h.mu.Lock()
+	pane := h.panes[id]
+	h.mu.Unlock()
+	if pane != "" {
+		return h, false
+	}
 	row, ok := h.row(id)
 	if !ok || !runtimeCanClose(row) || n.isAssistantSession(id) || n.runtimeAssistant(id) {
 		return h, false
@@ -150,17 +153,6 @@ func (n *Node) runtimeCloseTarget(id string) (*runtimeConn, bool) {
 		return h, false
 	}
 	return h, true
-}
-
-// runtimeAlreadyClosed is a runtime session whose saved stop provenance says a retire already succeeded. Its row may
-// still be listed, or may already have left the runtime's list; either way a repeat is a no-op, not a refusal.
-func (n *Node) runtimeAlreadyClosed(id string) bool {
-	_, _, known := n.runtimes.belongs(id)
-	if !known {
-		return false
-	}
-	st, ok := n.state.get(id)
-	return ok && st.StopCause != proto.StopUnknown
 }
 
 // runtimeClose uses the runtime's own close for a live, terminal-less runtime session. The runtime's close is the
