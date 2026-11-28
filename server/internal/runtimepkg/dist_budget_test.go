@@ -118,9 +118,11 @@ import (
 // Runtime command input (#14573) adds 2,657 B to the runtime SDK package
 // on top of the 319,212 B upstream total (321,869 B combined).
 // Reaping idle assistant ACP workers independently of coding agents and storing compact background summaries instead of full exported.steps in listedTranscriptCache add 8 B (321,869 B -> 321,877 B).
+// Replacing resident Antigravity ACP processes after a new agy sign-in (metadata-only sign-in stamp, lib/sign-in.js) or a
+// quota or sign-in error (#17860) adds 1,809 B (321,877 B -> 323,686 B).
 // Raise the budget only for code a runtime needs, never to embed the packages raw again.
 func TestDistBudget(t *testing.T) {
-	const budget = 321_877
+	const budget = 323_686
 	_, out := generateIntegrations(t)
 	entries, err := os.ReadDir(out)
 	if err != nil {

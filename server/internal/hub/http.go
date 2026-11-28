@@ -142,7 +142,7 @@ func (h *Hub) routes() http.Handler {
 	h.managerInstallRoutes(mux) // GET /i/<code>: the install script (managers_install.go)
 	mux.Handle("/api/", appAPI)
 	mux.Handle("/", h.adminRoutes(mux, appAPI, webApp(filepath.Join(h.cfg.dir, "web"))))
-	return h.outerLayers(h.privateNetworkOnly(h.sharingDispatcher(h.plaintextLoopbackOnly(jsonRouteErrors(mux)))))
+	return h.previewDispatcher(h.outerLayers(h.privateNetworkOnly(h.sharingDispatcher(h.plaintextLoopbackOnly(jsonRouteErrors(mux))))))
 }
 
 // outerLayers are what every request goes through around the routes, outermost first: the auth layer's marks
@@ -1101,6 +1101,10 @@ func (h *Hub) startSessionWith(w http.ResponseWriter, r *http.Request, p session
 	}
 	if p.ServiceTier != "" && !m.announces(nodeproto.SessionStartServiceTier) {
 		writeErrCode(w, http.StatusConflict, proto.CodeNodeOutdated, i18n.Err("hub-machine.node_no_session_start_speed"))
+		return
+	}
+	if len(p.ModelAliases) != 0 && !m.announces(nodeproto.SessionStartModelAliases) {
+		writeErrCode(w, http.StatusConflict, proto.CodeNodeOutdated, i18n.Err("hub-machine.node_no_model_aliases"))
 		return
 	}
 	opID := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Persona-Op-Id")))

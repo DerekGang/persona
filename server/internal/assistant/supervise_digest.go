@@ -1098,7 +1098,7 @@ func (s *Service) digestEntryRecheck(ctx context.Context, g superviseSignal, web
 	case sigOrphaned:
 		if g.Orphan == orphanQueued {
 			p, i, err := s.currentPlanAssignment(ctx, t)
-			if err != nil || orphanWaitsOnDecision(t) || s.taskStartOnWay(t.ID) {
+			if err != nil || queuedStartWaits(t) || s.taskStartOnWay(t.ID) {
 				return prompts.SuperviseEntry{}, false
 			}
 			if q, ok := queuedTaskOrphan(p.ID, p.Tasks[i], time.Now()); !ok || q.key != g.Key {

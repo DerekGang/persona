@@ -829,6 +829,20 @@ same model is not replaced again while the catalog stays the same. A successful 
 signed out replaces the ACP process the same way: at once when nothing uses it, otherwise before the next start, send,
 model change or check that finds it idle.
 
+A sign-in with another account while the CLI stays signed in triggers neither of those, and an `agy acp` process keeps
+the account it read at startup and writes it back at every hourly token refresh (#17860). Each native OAuth ACP process
+(shared, per-channel or assistant) therefore remembers the stamp of the CLI's sign-in it started under
+(`lib/sign-in.js`): the stat of `antigravity-oauth-token`, plus, on macOS, the dates of the login-keychain item
+`security find-generic-password -s gemini -a antigravity` prints without `-g` or `-w`. Nothing reads a token. The
+companion compares the stamp every 15 seconds while a process runs and before each call; a change makes the processes
+that started under the old stamp stale. A turn that fails with a quota or sign-in error (`RESOURCE_EXHAUSTED`,
+`usage_limit`, "please sign in") makes every running process stale too, at most once every five minutes, so a fresh
+process on an account that really is out of quota is not replaced again and again. A stale process is replaced by the
+reaper as soon as it is idle (no lease, request, permission card, running turn or background task), or before the
+next call that finds it idle; it is never replaced under a running turn. Interactive `agy` sessions in a terminal that
+are still on the old account keep writing it back; that is the CLI's behavior, and Persona follows whatever the CLI is
+signed in with at the time.
+
 Idle sessions can switch model, thinking level and permission mode through ACP. Native configuration updates determine
 the displayed model and effort. Each accepted field is published even if another field fails, and failures reach the caller.
 `auto` keeps native safe-operation approval when agy accepts it. If agy applies `default` instead, the companion changes

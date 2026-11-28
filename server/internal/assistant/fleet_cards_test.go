@@ -189,15 +189,25 @@ func TestScreenCardAfterHookExpires(t *testing.T) {
 		name, kind, tool, status string
 		withoutTerminal          bool
 		wantScreen               bool
+		// reviewer sets up Assistant (its main conversation on the fixture's computer). An Agent's permission is an
+		// internal decision for that reviewer (#17347): it waits on it until it expires. With no reviewer it is
+		// closed at once with internal_reviewer_unavailable and never reaches its expiry.
+		reviewer   bool
+		wantReason string
 	}{
-		{"blocked permission", proto.IxPermission, "Bash", proto.StatusBlocked, false, true},
-		{"blocked question", proto.IxQuestion, "AskUserQuestion", proto.StatusBlocked, false, true},
-		{"working again", proto.IxPermission, "Bash", proto.StatusWorking, false, false},
-		{"blocked without a terminal", proto.IxQuestion, "AskUserQuestion", proto.StatusBlocked, true, false},
+		{"blocked permission", proto.IxPermission, "Bash", proto.StatusBlocked, false, true, true, proto.DismissedExpired},
+		{"blocked question", proto.IxQuestion, "AskUserQuestion", proto.StatusBlocked, false, true, false, proto.DismissedExpired},
+		{"working again", proto.IxPermission, "Bash", proto.StatusWorking, false, false, true, proto.DismissedExpired},
+		{"blocked without a terminal", proto.IxQuestion, "AskUserQuestion", proto.StatusBlocked, true, false, false, proto.DismissedExpired},
+		// Closed unanswered, the dialog stays in the terminal: the owner still gets its screen card.
+		{"blocked permission without a reviewer", proto.IxPermission, "Bash", proto.StatusBlocked, false, true, false, "internal_reviewer_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ft, node := newCardFleet(t, false)
+				if tc.reviewer {
+					setSettings(t, ft.s, func(v *Settings) { v.Main, v.MachineID, v.MainMachineID = "conv1", "mac", "mac" })
+				}
 				node.setScreen(dialogScreen)
 				ix := proto.Interaction{ID: "ix_hook", MachineID: "mac", SessionID: "s1", Kind: tc.kind, ToolName: tc.tool,
 					ExpiresAt: time.Now().Add(time.Minute)}
@@ -221,8 +231,8 @@ func TestScreenCardAfterHookExpires(t *testing.T) {
 				ft.d.setSessions(ix.MachineID, []proto.Session{sess})
 
 				elapse(time.Until(ix.ExpiresAt))
-				if res := <-done; !res.Dismiss || res.Reason != proto.DismissedExpired {
-					t.Fatalf("hook result %+v, want expired dismissal", res)
+				if res := <-done; !res.Dismiss || res.Reason != tc.wantReason {
+					t.Fatalf("hook result %+v, want a %s dismissal", res, tc.wantReason)
 				}
 				elapse(2 * time.Second)
 
