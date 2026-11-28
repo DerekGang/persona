@@ -453,6 +453,9 @@ type Service struct {
 	// sendsSettleHook, when set, runs in sendsSettle once the task is opened again, before the turn held for it is
 	// taken up (tests).
 	sendsSettleHook func()
+	// digestTakenHook, when set, runs as a digest has taken its batch out of the gather and before it marks the batch
+	// sent (sendDigestLocked; tests: the same signal raised again in between).
+	digestTakenHook func()
 	// askRetryHook, when set, runs as the asks route's Retry has found the failed start its ask names, before the start
 	// reads the to-do again (tests: the to-do reopens or fails anew in between).
 	askRetryHook func(id string)

@@ -282,9 +282,7 @@ func (s *Service) handOverReview(ctx context.Context, t Todo, side, to string, n
 func (s *Service) signalHandedOverReview(todoID, to, key, detail string) {
 	g := superviseSignal{Todo: todoID, Kind: sigReview, Key: key, Recipient: to, Detail: detail}
 	s.supervise.mu.Lock()
-	if s.supervise.sent[g.id()] == g.Key {
-		delete(s.supervise.sent, g.id())
-	}
+	s.supervise.forgetToldLocked(g)
 	s.supervise.mu.Unlock()
 	s.signal(g)
 }

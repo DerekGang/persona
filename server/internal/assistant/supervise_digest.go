@@ -184,9 +184,28 @@ func (s *Service) sendDigestLocked(ctx context.Context) {
 		return
 	}
 	b.pending = held
+	// Until the batch is marked sent below, the queue refuses its keys as taken: a signal raised again meanwhile is
+	// refused as it is once this digest is done (#17838). Every return clears what it did not mark; taken is never
+	// persisted, so a restart in between leaves nothing behind.
+	took := slices.Clone(list)
+	b.init()
+	for _, g := range took {
+		b.taken[g.id()] = g.Key
+	}
+	released := false // the marking below clears them in its own lock; only an early return takes it again
+	defer func() {
+		if !released {
+			b.mu.Lock()
+			releaseTakenLocked(b, took)
+			b.mu.Unlock()
+		}
+	}()
 	prev := b.last
 	b.last = now
 	b.mu.Unlock()
+	if f := s.digestTakenHook; f != nil {
+		f()
+	}
 	if gating || len(held) > 0 {
 		defer s.schedulePendingSupervision() // an early return must not strand another batch or held outage signal
 	}
@@ -229,6 +248,8 @@ func (s *Service) sendDigestLocked(ctx context.Context) {
 		return
 	}
 	b.mu.Lock()
+	releaseTakenLocked(b, took)
+	released = true
 	for _, g := range list {
 		b.sent[g.id()] = g.Key
 	}
@@ -377,6 +398,16 @@ func (s *Service) toldWithoutMain(ctx context.Context, here Settings, g supervis
 		return up != "" && s.routeTo(ctx, here, superviseSignal{Todo: g.Todo, Kind: sigDecide, To: up}, there) != ""
 	}
 	return s.routeTo(ctx, here, g, there) != ""
+}
+
+// releaseTakenLocked clears the taken marks of took that still stand: what a handover or a put-back cleared, or a later
+// digest took again, is left as it is. s.supervise.mu is held.
+func releaseTakenLocked(b *superviseBook, took []superviseSignal) {
+	for _, g := range took {
+		if b.taken[g.id()] == g.Key {
+			delete(b.taken, g.id())
+		}
+	}
 }
 
 // dispatcherOf is the conversation that dispatched task id, while it can be told now (there): the one its ledger names
