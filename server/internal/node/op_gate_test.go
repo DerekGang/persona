@@ -34,6 +34,7 @@ func TestOpCalls(t *testing.T) {
 		{"then op vault list", 1},
 		{"do op vault list", 1},
 		{"! op vault list", 1},
+		{"if ! op vault list; then true; fi", 1},
 		{"for x in one; do op vault list; done", 1},
 		{"command -v op", 0},
 		{"command -V op", 0},
