@@ -16,7 +16,9 @@ func TestOpCalls(t *testing.T) {
 		{"/opt/homebrew/bin/op vault list", 1},
 		{"sudo op vault list", 1},
 		{"sudo -u me op vault list", 1},
+		{"sudo -i op vault list", 1},
 		{"env FOO=1 op vault list", 1},
+		{"env -i op vault list", 1},
 		{"timeout 5 op vault list", 1},
 		{"timeout -s KILL 5 op vault list", 1},
 		{"nice -n 10 op vault list", 1},
@@ -27,6 +29,15 @@ func TestOpCalls(t *testing.T) {
 		{"op vault list | head -3", 1},
 		{"echo hi && op whoami", 1},
 		{"op vault list; op whoami", 2},
+		{"if op vault list; then true; fi", 1},
+		{"while op vault list; do true; done", 1},
+		{"then op vault list", 1},
+		{"do op vault list", 1},
+		{"! op vault list", 1},
+		{"for x in one; do op vault list; done", 1},
+		{"command -v op", 0},
+		{"command -V op", 0},
+		{"command op vault list", 1},
 		{"echo op", 0},
 		{"grep -r op .", 0},
 		{"echo 'op vault list'", 0},
@@ -67,6 +78,8 @@ func TestOpBashVerdict(t *testing.T) {
 		"op read op://v/i/f | ssh host cat",
 		"(op vault list)",
 		`bash -c "op vault list"`,
+		"if op vault list; then true; fi",
+		"! op vault list",
 	}
 	for _, cmd := range denied {
 		if why := opBashVerdict(cmd); why == "" {
@@ -82,6 +95,7 @@ func TestOpBashVerdict(t *testing.T) {
 		"op version",
 		"op whoami",
 		"op whoami --account my",
+		"command -v op",
 		"echo op",
 		"grep -r op .",
 		"echo 'op vault list'",
@@ -112,13 +126,32 @@ func TestOpBashVerdictServiceAccount(t *testing.T) {
 	if why := opBashVerdict("env OP_SERVICE_ACCOUNT_TOKEN=ops_abc op vault list"); why != "" {
 		t.Errorf("an env token: refused, want allowed: %q", why)
 	}
+	if why := opBashVerdict("env -i op --version"); why != "" {
+		t.Errorf("env -i before an allowed op call: refused, want allowed: %q", why)
+	}
 	if why := opBashVerdict("OP_SERVICE_ACCOUNT_TOKEN= op vault list"); why == "" {
 		t.Error("an empty inline token: allowed, want refused")
+	}
+	if why := opBashVerdict("OP_SERVICE_ACCOUNT_TOKEN=ops_abc op whoami; op vault list"); why == "" {
+		t.Error("a token in the first segment: allowed the second segment, want refused")
 	}
 
 	t.Setenv(opServiceAccountEnv, "ops_abc")
 	if why := opBashVerdict("op vault list"); why != "" {
 		t.Errorf("a token in the environment: refused, want allowed: %q", why)
+	}
+}
+
+func TestOpCallsKeepServiceAccountPerSegment(t *testing.T) {
+	calls, ok := opCalls("OP_SERVICE_ACCOUNT_TOKEN=ops_abc op whoami; env -i op vault list")
+	if !ok {
+		t.Fatal("command could not be followed")
+	}
+	if len(calls) != 2 {
+		t.Fatalf("%d op calls, want 2: %+v", len(calls), calls)
+	}
+	if !calls[0].serviceAccount || calls[1].serviceAccount {
+		t.Fatalf("service-account state leaked across segments: %+v", calls)
 	}
 }
 

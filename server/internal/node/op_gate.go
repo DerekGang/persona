@@ -34,18 +34,29 @@ var opWrappers = map[string]bool{
 	"timeout": true, "stdbuf": true,
 }
 
-// opWrapperValues: the wrapper options that take the next word. An unknown option is skipped alone (the safest reading
-// of the command follows it), and an --option=value carries its value already.
-var opWrapperValues = map[string]bool{
-	"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true, // env
-	"-g": true, "--group": true, "-p": true, "--prompt": true, "-h": true, "--host": true, // sudo
-	"-r": true, "--role": true, "-t": true, "--type": true, "-U": true, "--other-user": true, "-D": true,
-	"-R": true, "--chroot": true,
-	"-a": true, "--argv0": true, // exec
-	"-n": true, "--adjustment": true, // nice
-	"-s": true, "--signal": true, "-k": true, "--kill-after": true, // timeout
-	"-i": true, "-o": true, "-e": true, "--input": true, "--output": true, "--error": true, // stdbuf, time
-	"-f": true, "--format": true, // time
+// opShellControls are shell keywords that can precede a command in a segment shellcmd.Split keeps whole.
+var opShellControls = map[string]bool{
+	"if": true, "then": true, "else": true, "elif": true, "while": true, "until": true, "do": true,
+	"!": true, "{": true, "}": true,
+}
+
+// opWrapperValues: the wrapper options that take the next word, by wrapper. An option not listed for that wrapper is
+// skipped alone (the safest reading of the command follows it), and an --option=value carries its value already.
+var opWrapperValues = map[string]map[string]bool{
+	"env": {
+		"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true,
+	},
+	"sudo": {
+		"-g": true, "--group": true, "-p": true, "--prompt": true, "-h": true, "--host": true,
+		"-u": true, "--user": true, "-r": true, "--role": true, "-t": true, "--type": true,
+		"-U": true, "--other-user": true, "-D": true, "-R": true, "--chroot": true,
+		"-C": true, "--close-from": true, "-T": true, "--command-timeout": true,
+	},
+	"exec":    {"-a": true, "--argv0": true},
+	"nice":    {"-n": true, "--adjustment": true},
+	"timeout": {"-s": true, "--signal": true, "-k": true, "--kill-after": true},
+	"stdbuf":  {"-i": true, "-o": true, "-e": true, "--input": true, "--output": true, "--error": true},
+	"time":    {"-f": true, "--format": true, "-o": true, "--output": true},
 }
 
 // opCallText looks like an op command somewhere in a command that shellcmd cannot follow: only then is it refused
@@ -76,6 +87,7 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 		return nil, !opCallText.MatchString(cmd)
 	}
 	for _, s := range segs {
+		segmentServiceAccount := serviceAccount
 		if depth <= 2 {
 			for _, nested := range s.Nested {
 				inner, ok := opCallsDepth(nested, serviceAccount, depth+1)
@@ -86,10 +98,14 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 			}
 		}
 		words := s.Words
+		for len(words) > 0 && opShellControls[words[0]] {
+			words = words[1:]
+		}
+		commandLookup := false
 		for {
 			for len(words) > 0 && isAssignment(words[0]) {
 				if k, v, _ := strings.Cut(words[0], "="); k == opServiceAccountEnv && v != "" {
-					serviceAccount = true
+					segmentServiceAccount = true
 				}
 				words = words[1:]
 			}
@@ -98,13 +114,16 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 			}
 			name := filepath.Base(words[0])
 			words = words[1:]
+			if name == "command" && len(words) > 0 && (words[0] == "-v" || words[0] == "-V") {
+				commandLookup = true
+			}
 			for len(words) > 0 && strings.HasPrefix(words[0], "-") {
 				w := words[0]
 				words = words[1:]
 				if strings.Contains(w, "=") {
 					continue // --option=value
 				}
-				if opWrapperValues[w] && len(words) > 0 {
+				if opWrapperValues[name][w] && len(words) > 0 {
 					words = words[1:]
 				}
 			}
@@ -116,13 +135,13 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 			case "env":
 				for len(words) > 0 && isAssignment(words[0]) {
 					if k, v, _ := strings.Cut(words[0], "="); k == opServiceAccountEnv && v != "" {
-						serviceAccount = true
+						segmentServiceAccount = true
 					}
 					words = words[1:]
 				}
 			}
 		}
-		if len(words) == 0 {
+		if len(words) == 0 || commandLookup {
 			continue
 		}
 		switch filepath.Base(words[0]) {
@@ -132,7 +151,7 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 					if depth > 2 {
 						return nil, !opCallText.MatchString(words[i+1])
 					}
-					inner, ok := opCallsDepth(words[i+1], serviceAccount, depth+1)
+					inner, ok := opCallsDepth(words[i+1], segmentServiceAccount, depth+1)
 					if !ok {
 						return nil, false
 					}
@@ -143,7 +162,7 @@ func opCallsDepth(cmd string, serviceAccount bool, depth int) (calls []opCall, o
 			continue
 		}
 		if filepath.Base(words[0]) == "op" {
-			calls = append(calls, opCall{words: words, serviceAccount: serviceAccount})
+			calls = append(calls, opCall{words: words, serviceAccount: segmentServiceAccount})
 		}
 	}
 	return calls, true
