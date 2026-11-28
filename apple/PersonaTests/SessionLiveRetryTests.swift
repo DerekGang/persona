@@ -10,6 +10,7 @@ struct SessionLiveRetryTests {
     private static let retryError = "429 Synthetic rate limit for retry capture"
     private static let retryObject = #"{"verb":"Frosting","elapsed_s":16,"tokens_down":22800,"thinking":true,"thought_s":3,"at":"2026-11-18T07:30:00Z","retry_error":"429 Synthetic rate limit for retry capture","retry_attempt":5,"retry_max":10}"#
     private static let ordinaryObject = #"{"verb":"Frosting","elapsed_s":17,"tokens_down":23000}"#
+    private static let compactionObject = #"{"verb":"Compacting conversation","elapsed_s":7,"at":"2026-11-18T07:30:00Z"}"#
 
     private func live(_ object: String = Self.retryObject) throws -> SessionLive {
         try JSONDecoder().decode(SessionLive.self, from: Data(object.utf8))
@@ -52,6 +53,21 @@ struct SessionLiveRetryTests {
         }
         #expect(key == SessionKey(machineID: "mac", sessionID: "agent-1"))
         #expect(decoded == nil)
+    }
+
+    @Test func compactionUsesTheSameLivePushAndClearsWithIt() throws {
+        let data = Data(#"{"type":"live","machine_id":"mac","session_id":"agent-1","live":{"verb":"Compacting conversation","elapsed_s":7,"at":"2026-11-18T07:30:00Z"}}"#.utf8)
+        guard case .live(let key, let live)? = ServerEvent.decode(data), let live else {
+            Issue.record("compaction live event not decoded")
+            return
+        }
+        #expect(key == SessionKey(machineID: "mac", sessionID: "agent-1"))
+        let shown = try #require(SessionLiveCompactionPresentation.of(live))
+        #expect(shown.elapsedS == 7)
+        #expect(SessionLiveCompactionPresentation.of(try self.live(Self.compactionObject)) == shown)
+        #expect(SessionLiveCompactionPresentation.of(nil) == nil, "live: null clears the work line")
+        #expect(SessionLiveCompactionPresentation.of(try self.live(Self.ordinaryObject)) == nil)
+        #expect(SessionLiveCompactionPresentation.of(live, subscribed: false) == nil)
     }
 
     @Test(arguments: [
@@ -107,8 +123,11 @@ struct SessionLiveRetryTests {
         model.applySessions([MachineRef(group: "", id: "box"): [session]])
         model.subscribe(key, by: UUID())
         model.handle(.live(key, try live()), group: "")
+        model.handle(.live(key, try live(Self.compactionObject)), group: "")
         #expect(model.liveRetry(key) != nil)
+        #expect(model.liveCompaction(key)?.elapsedS == 7)
         #expect(await model.close(key))
         #expect(model.liveRetry(key) == nil)
+        #expect(model.liveCompaction(key) == nil)
     }
 }
