@@ -117,7 +117,6 @@ func TestReadThatAnswersInTime(t *testing.T) {
 	t.Cleanup(func() { readTimeout = old })
 	readTimeout = 5 * time.Second
 	fakeDial(t, func(context.Context) ([]byte, error) {
-		time.Sleep(20 * time.Millisecond)
 		return json.Marshal(proto.TextResult(`{"tasks":[]}`, false))
 	})
 	if code, out, errOut := runMain("a2a_get", `{}`); code != exitOK || out != "{\"tasks\":[]}\n" || errOut != "" {

@@ -38,7 +38,7 @@ func (f *folders) answers(path string) bool {
 		<-f.release
 		return false
 	case "late":
-		time.Sleep(f.lateBy)
+		time.Sleep(f.lateBy) // sleep-ok: a folder that answers after a short delay is the case under test
 	}
 	return true
 }
