@@ -216,6 +216,36 @@ describe('persona plugin', () => {
     ])
   })
 
+  test('reports the end on turn.complete while compaction is still running', async ($, on) => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const w = world(on, [], undefined, {
+      onCompact: async () => {
+        await held
+        return { messages: compactInput.messages }
+      },
+    })
+    const compact = $.session.compact as unknown as (input: Record<string, unknown>) => Promise<unknown>
+    const running = compact(compactInput)
+    await w.clock.settle()
+    expect(w.requests.filter(r => r.url.endsWith('/compact')).map(r => r.body)).toEqual([
+      { session_id: SESSION, phase: 'start', trigger: 'plugin' },
+    ])
+
+    await $.turn.complete({ turnId: 'turn-compacting', answer: 'done' } as never)
+    await w.clock.settle()
+    expect(w.requests.filter(r => r.url.endsWith('/compact')).map(r => r.body)).toEqual([
+      { session_id: SESSION, phase: 'start', trigger: 'plugin' },
+      { session_id: SESSION, phase: 'end', trigger: 'plugin' },
+    ])
+
+    release()
+    await running
+    await w.clock.settle()
+  })
+
   test('keeps compaction unchanged and quiet without a node', async ($, on) => {
     const w = world(on, [], undefined, { compactionUnavailable: true })
     const compact = $.session.compact as unknown as (input: Record<string, unknown>) => Promise<unknown>

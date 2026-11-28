@@ -50686,24 +50686,24 @@
       },
       "extractionState": "manual"
     },
-    "Compacting context": {
+    "Compacting context…": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compacting context"
+            "value": "Compacting context…"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "コンテキストを圧縮中"
+            "value": "コンテキストを圧縮中…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在压缩上下文"
+            "value": "正在压缩上下文…"
           }
         }
       },

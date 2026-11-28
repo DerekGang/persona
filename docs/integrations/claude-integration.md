@@ -763,7 +763,7 @@ installs and updates it.
   outside Persona's terminals, the node turns this into the second source of `session.live`: the first push says
   `verb: "Compacting conversation"` with `elapsed_s` and `at`, a refresh follows every few seconds, and `live: null`
   ends it. An end on turn completion, process exit or the 15-minute defensive timeout also clears it. The web and Apple
-  work lines say "Compacting context"; subagent compactions and sessions whose screen the node can read are not
+  work lines say "Compacting context…"; subagent compactions and sessions whose screen the node can read are not
   reported this way.
 - **Which messages**: only the owner's own. The hub marks a message typed in the owner's app (`captureHumanSubmission`:
   a full-role device token, not a link or answer-only token, not the master token, not a member hub), and the devices

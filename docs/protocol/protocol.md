@@ -4046,7 +4046,7 @@ Filtered ordered views/counts are cached by revision (up to 64); warm pages and 
 ### Live status (`session_live`, 2026-11-05)
 
 The status line at the bottom of the screen while Claude Code works (`✻ Frosting… (16m 15s · ↓ 22.8k tokens · thinking with xhigh effort)`) has a verb, this turn's elapsed time, output tokens and whether it's thinking, none of which is in the transcript. A model request retry uses the same place above the input (`✻ 429 … · retrying in 4s · attempt 5/10`) while the turn is still running, and may have no transcript row yet. A pane-less Claude outside Persona's terminals has no screen to read; Persona's plugin reports its main-loop compaction separately through the same live event.
-The web shows ordinary live status; the web and Apple watched Agent chats show the observed retry error and attempt count. Web, HarmonyOS and Apple chats show a plugin-reported compaction as "Compacting context".
+The web shows ordinary live status; the web and Apple watched Agent chats show the observed retry error and attempt count. Web and Apple chats show a plugin-reported compaction as "Compacting context…".
 
 - Type `proto.SessionLive` (`server/internal/proto/live.go`): `verb` (without the ellipsis), `elapsed_s`, `tokens_down` (output tokens from `↓`; `↑` is input and doesn't count), `thinking` (the `thinking…` segment),
   `thought_s` (`thought for 3s`), `retry_error` (the observed model error without its countdown or attempt suffix), `retry_attempt` / `retry_max` (the current and maximum attempts shown), `at` (when the node read it, RFC 3339); missing fields are omitted.

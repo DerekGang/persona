@@ -8339,7 +8339,7 @@ struct WorkLine: View, Equatable {
     /// The same words as the web for this push, with the elapsed time the node sent.
     private func compactionSummary(_ compaction: SessionLiveCompactionPresentation) -> some View {
         HStack(spacing: Theme.Space.flush) {
-            Text(String(localized: "Compacting context")).truncationMode(.tail)
+            Text(Self.compactionWords).truncationMode(.tail)
             let took = compaction.compactDuration
             if !took.isEmpty {
                 Text(took).fixedSize()
@@ -8373,7 +8373,7 @@ struct WorkLine: View, Equatable {
         if accepting { return String(localized: "Processing…") }
         if let compaction {
             let took = compaction.compactDuration
-            let words = String(localized: "Compacting context")
+            let words = Self.compactionWords
             return took.isEmpty ? words : "\(words) · \(took)"
         }
         // The step in full: the line may have cut it.
@@ -8402,6 +8402,9 @@ struct WorkLine: View, Equatable {
         if s < 3600 { return s % 60 == 0 ? String(localized: "\(s / 60) min [Chat View a38788]") : String(localized: "\(s / 60)m \(s % 60)s") }
         return String(localized: "\(s / 3600) hr \(s % 3600 / 60) min")
     }
+
+    /// The web's running-status words verbatim, within each interface language.
+    private static var compactionWords: String { String(localized: "Compacting context…") }
 }
 
 private extension SessionLiveCompactionPresentation {
